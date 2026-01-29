@@ -84,6 +84,40 @@ err := sm.Writer().Transaction(ctx, func(txCtx context.Context) error {
 - Panics are caught, the transaction is rolled back, and the panic is re-raised
 - `GetDBOrTx(ctx)` returns the transaction if one exists in the context, otherwise the base DB
 
+### TransactionManager
+
+`TransactionManager` wraps `WriterSession.Transaction` with automatic retry for `pgxretry.ErrRetryableInTx` errors. It is the application-level counterpart to pgxretry's driver-level retry: pgxretry retries individual queries outside transactions, while TransactionManager retries entire transactions.
+
+```go
+tm := conn.NewTransactionManager(sm.Writer())
+
+err := tm.Do(ctx, func(txCtx context.Context) error {
+    if err := sm.Writer().GetDBOrTx(txCtx).Create(&order).Error; err != nil {
+        return err
+    }
+    if err := sm.Writer().GetDBOrTx(txCtx).Create(&orderItem).Error; err != nil {
+        return err
+    }
+    return nil
+})
+```
+
+Customize retry behavior with functional options:
+
+```go
+tm := conn.NewTransactionManager(sm.Writer(),
+    conn.WithMaxRetries(5),
+    conn.WithRetryDelay(500 * time.Millisecond),
+    conn.WithLogger(customLogger),
+)
+```
+
+- Retries only on `pgxretry.ErrRetryableInTx` (connection errors that occurred inside a transaction)
+- Calls `ResetConnection` before each retry to recover the underlying connection
+- Non-retryable errors are returned immediately without retry
+- Respects context cancellation between retries
+- Defaults: 3 retries, 1 second delay
+
 ## Raw SQL with QueryDB
 
 `QueryDB` wraps sqlx for named parameter queries:
