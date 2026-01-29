@@ -1,0 +1,82 @@
+version: "2"
+
+run:
+  timeout: 5m
+  tests: true
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - ineffassign
+    - staticcheck
+    - unused
+    - misspell
+    - unconvert
+    - unparam
+    - gocritic
+    - revive
+
+  settings:
+    revive:
+      rules:
+        - name: blank-imports
+        - name: context-as-argument
+        - name: context-keys-type
+        - name: dot-imports
+        - name: error-return
+        - name: error-strings
+        - name: error-naming
+        - name: exported
+          disabled: true
+        - name: increment-decrement
+        - name: var-naming
+        - name: package-comments
+          disabled: true
+        - name: range
+        - name: receiver-naming
+        - name: time-naming
+        - name: unexported-return
+        - name: indent-error-flow
+        - name: errorf
+        - name: empty-block
+        - name: superfluous-else
+        - name: unused-parameter
+          disabled: true
+        - name: unreachable-code
+
+    gocritic:
+      enabled-tags:
+        - diagnostic
+        - style
+      disabled-checks:
+        - commentedOutCode
+        - ifElseChain
+        - importShadow
+        - unnamedResult
+        - unnecessaryDefer
+
+  exclusions:
+    rules:
+      - path: _test\.go
+        linters:
+          - errcheck
+          - unparam
+          - revive
+      - path: mock_test\.go
+        linters:
+          - unused
+
+formatters:
+  enable:
+    - gofumpt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/hacomono-lib/go-pgkit
+
+issues:
+  max-issues-per-linter: 0
+  max-same-issues: 0

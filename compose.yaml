@@ -1,0 +1,60 @@
+services:
+  postgres:
+    image: postgres:17
+    container_name: postgres-pgkit-test
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: pgkit_test
+    volumes:
+      - ./docker/postgres:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "postgres"]
+      interval: 3s
+      timeout: 3s
+      retries: 10
+
+  test:
+    image: golang:1.25
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    environment:
+      DB_HOST: postgres
+      DB_PORT: "5432"
+      DB_USER: app_user
+      DB_PASSWORD: app_password
+      DB_NAME: pgkit_test
+      DB_SCHEMA: public
+    depends_on:
+      postgres:
+        condition: service_healthy
+    command: go test -count=1 -race -v ./...
+
+  lint:
+    image: golangci/golangci-lint:v2.8
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+      - golangci-lint-cache:/root/.cache/golangci-lint
+    command: golangci-lint run
+
+  fmt:
+    image: golang:1.25
+    working_dir: /app
+    volumes:
+      - .:/app
+      - go-mod-cache:/go/pkg/mod
+      - go-build-cache:/root/.cache/go-build
+    command: sh -c "go install mvdan.cc/gofumpt@v0.9.2 && gofumpt -w ."
+
+volumes:
+  go-mod-cache:
+  go-build-cache:
+  golangci-lint-cache:
