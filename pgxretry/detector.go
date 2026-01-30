@@ -7,7 +7,7 @@ import (
 	"net"
 	"strings"
 
-	"github.com/jackc/pgconn"
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 const (
@@ -126,7 +126,7 @@ func extractPostgreSQLError(err error) (sqlState, message string) {
 	// Default message
 	message = err.Error()
 
-	// Check pgconn.PgError (pgx v4/v5)
+	// Check pgconn.PgError (pgx v5)
 	var pgErr *pgconn.PgError
 	if errors.As(err, &pgErr) {
 		sqlState = pgErr.SQLState()
