@@ -5,7 +5,7 @@ This document covers how to run tests and use the test helpers provided by go-pg
 ## Prerequisites
 
 - Docker and Docker Compose
-- Go 1.25+
+- Go 1.25+ (tested on 1.25, 1.26, 1.27)
 
 ## Running Tests
 
@@ -36,6 +36,13 @@ The test container connects to PostgreSQL with these environment variables (defi
 | `DB_PASSWORD` | `app_password` |
 | `DB_NAME` | `pgkit_test` |
 | `DB_SCHEMA` | `public` |
+
+If host port `5432` is already in use (e.g. by another local Postgres instance), override the published port with `DB_HOST_PORT`:
+
+```bash
+DB_HOST_PORT=15432 make up
+DB_HOST_PORT=15432 make test
+```
 
 ## Database Schema
 

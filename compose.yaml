@@ -3,7 +3,7 @@ services:
     image: postgres:17
     container_name: postgres-pgkit-test
     ports:
-      - "5432:5432"
+      - "${DB_HOST_PORT:-5432}:5432"
     environment:
       POSTGRES_USER: postgres
       POSTGRES_PASSWORD: postgres
@@ -17,7 +17,7 @@ services:
       retries: 10
 
   test:
-    image: golang:1.25
+    image: golang:${GO_VERSION:-1.25}
     working_dir: /app
     volumes:
       - .:/app
