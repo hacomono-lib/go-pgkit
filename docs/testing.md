@@ -37,6 +37,13 @@ The test container connects to PostgreSQL with these environment variables (defi
 | `DB_NAME` | `pgkit_test` |
 | `DB_SCHEMA` | `public` |
 
+If host port `5432` is already in use (e.g. by another local Postgres instance), override the published port with `DB_HOST_PORT`:
+
+```bash
+DB_HOST_PORT=15432 make up
+DB_HOST_PORT=15432 make test
+```
+
 ## Database Schema
 
 The test database is initialized by scripts in `docker/postgres/`:
