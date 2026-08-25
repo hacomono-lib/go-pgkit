@@ -5,7 +5,7 @@ This document covers how to run tests and use the test helpers provided by go-pg
 ## Prerequisites
 
 - Docker and Docker Compose
-- Go 1.25+
+- Go 1.25+ (tested on 1.25, 1.26, 1.27)
 
 ## Running Tests
 

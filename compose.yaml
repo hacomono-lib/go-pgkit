@@ -17,7 +17,7 @@ services:
       retries: 10
 
   test:
-    image: golang:1.25
+    image: golang:${GO_VERSION:-1.25}
     working_dir: /app
     volumes:
       - .:/app
