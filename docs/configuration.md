@@ -164,6 +164,12 @@ Valid values: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full
 
 `{PREFIX}TIMEZONE` and `{PREFIX}SCHEMA` are read directly from environment variables inside the `dsn()` method, not by `WithEnvVars`. This means they take effect regardless of which configuration method you use (functional options or env vars), and they do not support role-based overrides (`DB_WRITER_TIMEZONE` will not work). They do respect the custom prefix set by `WithEnvVarsWithPrefix`.
 
+### Connection values are passed literally
+
+Host, user, password, database name, `sslmode` and `{PREFIX}SCHEMA` are single-quoted in the DSN, so spaces, quotes and backslashes in them (e.g. in a password) reach the server as-is. Do not escape them yourself, and do not use one of them to pass extra connection parameters (e.g. `sslmode=verify-full sslrootcert=...`); the whole string becomes the value.
+
+`{PREFIX}TIMEZONE` is the exception: it is written unquoted because GORM's postgres driver reads it from the raw DSN. Set it to a plain time zone name such as `Asia/Tokyo`.
+
 ### GORM prepared statements are disabled
 
 GORM's `PrepareStmt` mode is not enabled. This ensures that the request context (carrying tenant/user IDs) is correctly passed through `database/sql` to `SessionResetter.ResetSession(ctx)` on every query. Enabling prepared statements would bypass this context propagation.

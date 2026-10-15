@@ -102,10 +102,24 @@ func (c *Config) dsn() string {
 	if connectTimeout <= 0 {
 		connectTimeout = 10
 	}
+	// When retry and RLS are both disabled, gorm's postgres driver extracts TimeZone from the raw DSN
+	// with an unanchored regex. It is unquoted so the regex does not keep the quotes, and placed first
+	// so the regex cannot match "timezone=" inside a quoted value such as the password.
+	// Time zone names contain no characters that need quoting.
 	return fmt.Sprintf(
-		"host=%s user=%s password=%s dbname=%s port=%d sslmode=%s TimeZone=%s connect_timeout=%d search_path=%s",
-		c.Host, c.User, c.Password, c.DBName, c.Port, sslMode, tz, connectTimeout, schema,
+		"TimeZone=%s host=%s user=%s password=%s dbname=%s port=%d sslmode=%s connect_timeout=%d search_path=%s",
+		tz, quoteDSNValue(c.Host), quoteDSNValue(c.User), quoteDSNValue(c.Password), quoteDSNValue(c.DBName), c.Port,
+		quoteDSNValue(sslMode), connectTimeout, quoteDSNValue(schema),
 	)
+}
+
+var dsnValueEscaper = strings.NewReplacer(`\`, `\\`, `'`, `\'`)
+
+// quoteDSNValue quotes a keyword/value connection string value following libpq's rules.
+// Unquoted values end at whitespace and treat backslashes as escapes,
+// so a password containing a space, a quote or a backslash would otherwise not reach the server intact.
+func quoteDSNValue(v string) string {
+	return "'" + dsnValueEscaper.Replace(v) + "'"
 }
 
 func (c *Config) Connect() (*Session, error) {
