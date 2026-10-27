@@ -11,8 +11,6 @@ import (
 	"sync"
 	"time"
 
-	"github.com/jackc/pgx/v5"
-	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -99,15 +97,18 @@ func newSession(config *Config) *Session {
 	}
 
 	// Configure retry.
-	// RLS is applied to the session's own connector (see newConnector),
-	// so retryConfig is created only when retry is enabled.
+	// When RLS is enabled, pgxretry's ConnectorWrapper is used to inject rlsconn,
+	// so retryConfig is created even if retry itself is disabled.
+	// In that case only retries outside transactions are disabled: pgxretry still wraps
+	// retryable errors in transactions with ErrRetryableInTx for TransactionManager.
 	var retryConfig *pgxretry.Config
-	if config.EnableRetry {
+	if config.EnableRetry || config.EnableRLS {
 		retryConfig = &pgxretry.Config{
 			MaxRetries:     config.MaxRetries,
 			InitialBackoff: time.Duration(config.RetryBackoff) * time.Millisecond,
 			BackoffFactor:  2.0,
 			MaxBackoff:     5 * time.Second,
+			DisableRetry:   !config.EnableRetry,
 		}
 
 		retryConfig.WithSlog(slogLogger)
@@ -486,37 +487,26 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 	return db, sqlDB, nil
 }
 
-// newConnector returns a connector for this session, or nil when neither retry nor RLS is used.
+// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled.
 // Each session has its own connector, so its retry and RLS configs are not shared with other sessions.
 func (s *Session) newConnector() (driver.Connector, error) {
-	var wrap pgxretry.ConnectorWrapper
-	if s.rlsConfig != nil {
-		rlsConfig := s.rlsConfig // capture for closure
-		wrap = func(baseConnector driver.Connector) driver.Connector {
-			return rlsconn.NewRLSConnector(baseConnector, rlsConfig)
-		}
-	}
-
-	dsn := s.config.dsn()
-	if s.retryConfig != nil {
-		if s.retryConfig.ConnectionResetFunc == nil {
-			s.retryConfig.WithConnectionReset(s.ResetConnection)
-		}
-		// Set RLS connector wrapper so that ResetSession is called on new connections
-		if wrap != nil && s.retryConfig.ConnectorWrapper == nil {
-			s.retryConfig.WithConnectorWrapper(wrap)
-		}
-		return pgxretry.NewConnector(dsn, s.retryConfig)
-	}
-
-	if wrap == nil {
+	if s.retryConfig == nil {
 		return nil, nil
 	}
-	pgxConfig, err := pgx.ParseConfig(dsn)
-	if err != nil {
-		return nil, err
+
+	if s.retryConfig.ConnectionResetFunc == nil {
+		s.retryConfig.WithConnectionReset(s.ResetConnection)
 	}
-	return wrap(stdlib.GetConnector(*pgxConfig)), nil
+
+	// Set RLS connector wrapper so that ResetSession is called on new connections
+	if s.rlsConfig != nil && s.retryConfig.ConnectorWrapper == nil {
+		rlsConfig := s.rlsConfig // capture for closure
+		s.retryConfig.WithConnectorWrapper(func(baseConnector driver.Connector) driver.Connector {
+			return rlsconn.NewRLSConnector(baseConnector, rlsConfig)
+		})
+	}
+
+	return pgxretry.NewConnector(s.config.dsn(), s.retryConfig)
 }
 
 // configureConnectionPool applies pool settings to the sql.DB.

@@ -176,4 +176,4 @@ GORM's `PrepareStmt` mode is not enabled. This ensures that the request context 
 
 ### Each session has its own connector
 
-Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings apply only to that session, whichever session connects first. When retry is disabled, the session does not go through pgxretry. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
+Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings apply only to that session, whichever session connects first. When retry is disabled (`WithRetry(false, ...)`), queries outside transactions are not retried, but retryable errors in transactions are still returned as `pgxretry.ErrRetryableInTx`, so `TransactionManager` keeps retrying transactions (unless RLS is also disabled). See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.

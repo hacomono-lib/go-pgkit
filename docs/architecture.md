@@ -85,19 +85,19 @@ Config.Connect()
     │
     ▼
 newSession(config)
-    ├── creates pgxretry.Config (if retry enabled)
+    ├── creates pgxretry.Config (if retry or RLS enabled; DisableRetry if retry is disabled)
     └── creates rlsconn.Config (if RLS enabled with session vars)
     │
     ▼
 session.connect()
     │
     ├── newConnector()                     ← the session's own connector
-    │       ├── retry enabled: pgxretry.NewConnector(dsn, retryConfig)
-    │       │       └── sets ConnectionResetFunc, ConnectorWrapper (rlsconn)
-    │       └── retry disabled: pgx/v5/stdlib connector, wrapped with rlsconn if RLS is enabled
+    │       └── pgxretry.NewConnector(dsn, retryConfig)
+    │               └── sets ConnectionResetFunc, ConnectorWrapper (rlsconn)
     │
     ├── postgres.New(Conn: sql.OpenDB(connector))
     │       └── creates GORM dialector with the session's connection pool
+    │           (postgres.Open(dsn) if neither retry nor RLS is enabled)
     │
     ├── gormOpener(dialector, gormConfig)   ← opens GORM connection
     │

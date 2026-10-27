@@ -45,6 +45,12 @@ type Config struct {
 	// on new connections.
 	// Example: rlsconn.NewRLSConnector(baseConnector, rlsConfig)
 	ConnectorWrapper ConnectorWrapper
+
+	// DisableRetry disables retries of operations outside transactions.
+	// Retryable errors in transactions are still wrapped with ErrRetryableInTx,
+	// so transaction-level retries (e.g., conn.TransactionManager) keep working.
+	// Unlike MaxRetries: 0, which WithDefaults replaces with the default.
+	DisableRetry bool
 }
 
 // DefaultConfig returns the default configuration
