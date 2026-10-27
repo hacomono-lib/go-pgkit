@@ -180,7 +180,7 @@ func executeWithRetry[T any](ctx context.Context, c *retryableConn, operation fu
 		return result, err
 	}
 
-	// Not in transaction: run once when retry is disabled
+	// Not in transaction: run once without re-running or resetting when retry is disabled
 	if c.config.DisableRetry {
 		return operation()
 	}

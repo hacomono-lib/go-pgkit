@@ -12,8 +12,9 @@ import (
 	"github.com/hacomono-lib/go-pgkit/rlsctx"
 )
 
-// With retry disabled, the session still goes through pgxretry (unless RLS is also disabled),
-// but only to wrap errors in transactions: retries outside transactions are disabled.
+// With retry disabled, the session still goes through pgxretry (unless RLS is also disabled)
+// so that retryable errors in transactions are wrapped with ErrRetryableInTx,
+// but pgxretry does not re-run a query that fails outside a transaction.
 func TestSessionConnector_RetryDisabled(t *testing.T) {
 	s := newSession(NewConfig(WithEnvVars("writer"), WithRetry(false, 0, 0)))
 	require.NotNil(t, s.retryConfig)
@@ -23,8 +24,8 @@ func TestSessionConnector_RetryDisabled(t *testing.T) {
 	assert.Nil(t, s.retryConfig)
 }
 
-// TransactionManager retries a transaction that fails with a retryable error,
-// whether or not retry outside transactions is enabled.
+// TransactionManager re-runs a transaction that fails with a retryable error in a new transaction,
+// with retry enabled or disabled (WithRetry applies only to queries outside transactions).
 func TestSessionConnector_TransactionManagerRetries(t *testing.T) {
 	tests := []struct {
 		name string

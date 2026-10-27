@@ -99,8 +99,9 @@ func newSession(config *Config) *Session {
 	// Configure retry.
 	// When RLS is enabled, pgxretry's ConnectorWrapper is used to inject rlsconn,
 	// so retryConfig is created even if retry itself is disabled.
-	// In that case only retries outside transactions are disabled: pgxretry still wraps
-	// retryable errors in transactions with ErrRetryableInTx for TransactionManager.
+	// In that case DisableRetry stops pgxretry from re-running a query that fails outside
+	// a transaction, while retryable errors in transactions are still wrapped with
+	// ErrRetryableInTx, so TransactionManager can re-run the whole transaction.
 	var retryConfig *pgxretry.Config
 	if config.EnableRetry || config.EnableRLS {
 		retryConfig = &pgxretry.Config{

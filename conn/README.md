@@ -170,7 +170,8 @@ See [docs/architecture.md](../docs/architecture.md) for the full reset flow.
 
 ## Caveats
 
-- **Each session has its own connector**: Retry and RLS settings apply only to the session they are configured on, whichever session connects first. When retry is disabled (`WithRetry(false, ...)`), queries outside transactions are not retried, but `TransactionManager` still retries transactions (unless RLS is also disabled).
+- **Each session has its own connector**: Retry and RLS settings apply only to the session they are configured on, whichever session connects first.
+- **`WithRetry` applies only to queries outside transactions**: It controls whether the driver re-runs a single query that fails outside a transaction. Queries in a transaction are never re-run by the driver; `TransactionManager` re-runs the whole transaction on `pgxretry.ErrRetryableInTx`, also with `WithRetry(false, ...)` unless RLS is also disabled. See [docs/configuration.md — Caveats](../docs/configuration.md#withretry-applies-only-to-queries-outside-transactions).
 - **`sslmode` defaults to `disable`**. Override with `WithSSLMode` or `DB_SSLMODE`. See [docs/configuration.md — Caveats](../docs/configuration.md#caveats).
 - **GORM prepared statements are disabled** to ensure per-request context propagation for RLS session variables.
 
