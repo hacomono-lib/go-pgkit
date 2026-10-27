@@ -1084,3 +1084,47 @@ func (l *testLogger) WarnContext(ctx context.Context, msg string, args ...any) {
 func (l *testLogger) ErrorContext(ctx context.Context, msg string, args ...any) {
 	l.logFunc("error", msg)
 }
+
+// With DisableRetry, a query that fails outside a transaction is not re-run and the reset function
+// is not called, but retryable errors in transactions are still wrapped with ErrRetryableInTx.
+func (s *ConnTestSuite) TestDisableRetry() {
+	newConn := func(baseConn driver.Conn, resets *int) *pgxretry.RetryableConn {
+		config := pgxretry.DefaultConfig()
+		config.DisableRetry = true
+		config.InitialBackoff = time.Millisecond
+		config.WithConnectionReset(func(context.Context) error {
+			*resets++
+			return nil
+		})
+		return pgxretry.NewRetryableConnForTest(baseConn, "test-dsn", config, pgxretry.NewDriver(config))
+	}
+
+	s.Run("does not re-run a failed query outside a transaction", func() {
+		mockConn := &mockFullConn{}
+		mockConn.On("ExecContext", mock.Anything, "SELECT 1", mock.Anything).Return(nil, io.EOF).Once()
+
+		var resets int
+		_, err := newConn(mockConn, &resets).ExecContext(context.Background(), "SELECT 1", nil)
+
+		s.ErrorIs(err, io.EOF)
+		s.NotErrorIs(err, pgxretry.ErrRetryableInTx)
+		s.Equal(0, resets)
+		mockConn.AssertExpectations(s.T())
+	})
+
+	s.Run("wraps retryable errors in transactions", func() {
+		mockConn := &mockFullConn{}
+		mockConn.On("BeginTx", mock.Anything, mock.Anything).Return(&mockTx{}, nil).Once()
+		mockConn.On("ExecContext", mock.Anything, "SELECT 1", mock.Anything).Return(nil, io.EOF).Once()
+
+		var resets int
+		conn := newConn(mockConn, &resets)
+		_, err := conn.BeginTx(context.Background(), driver.TxOptions{})
+		s.Require().NoError(err)
+		_, err = conn.ExecContext(context.Background(), "SELECT 1", nil)
+
+		s.ErrorIs(err, pgxretry.ErrRetryableInTx)
+		s.Equal(0, resets)
+		mockConn.AssertExpectations(s.T())
+	})
+}

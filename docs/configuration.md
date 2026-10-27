@@ -26,7 +26,7 @@ cfg := conn.NewConfig(
 | `WithDatabase(dbName string)` | Set database name |
 | `WithSSLMode(sslMode string)` | Set SSL mode (`"disable"`, `"require"`, `"verify-full"`, etc.) |
 | `WithConnectionPool(maxOpen, maxIdle, maxLifetime int)` | Set pool parameters (maxLifetime in minutes) |
-| `WithRetry(enable bool, maxRetries int, backoffMs int)` | Configure retry behavior |
+| `WithRetry(enable bool, maxRetries int, backoffMs int)` | Configure whether the driver re-runs a query that fails outside a transaction (see [Caveats](#withretry-applies-only-to-queries-outside-transactions)) |
 | `WithConnectTimeout(seconds int)` | TCP connection timeout in seconds (default: `10`) |
 | `WithGracefulCloseTimeout(seconds int)` | Timeout for graceful connection close on reset |
 | `WithLogLevel(level LogLevel)` | Set GORM log level (`LogLevelSilent`, `LogLevelError`, `LogLevelWarn`, `LogLevelInfo`) |
@@ -121,7 +121,8 @@ When retry or RLS is enabled, `conn` creates a `pgxretry.Config` internally with
 
 | conn field | pgxretry field | Notes |
 |------------|---------------|-------|
-| `MaxRetries` | `MaxRetries` | Set to `0` if `EnableRetry` is `false` |
+| `EnableRetry` | `DisableRetry` | `DisableRetry` is `!EnableRetry`. See [Caveats](#withretry-applies-only-to-queries-outside-transactions) |
+| `MaxRetries` | `MaxRetries` | Used only when `EnableRetry` is `true`. `0` is replaced with pgxretry's default (`3`) |
 | `RetryBackoff` (ms) | `InitialBackoff` | Converted to `time.Duration` |
 | — | `BackoffFactor` | Fixed at `2.0` |
 | — | `MaxBackoff` | Fixed at `5s` |
@@ -174,6 +175,12 @@ Host, user, password, database name, `sslmode` and `{PREFIX}SCHEMA` are single-q
 
 GORM's `PrepareStmt` mode is not enabled. This ensures that the request context (carrying tenant/user IDs) is correctly passed through `database/sql` to `SessionResetter.ResetSession(ctx)` on every query. Enabling prepared statements would bypass this context propagation.
 
-### Driver registration is process-global
+### Each session has its own connector
 
-`pgxretry.Register` can only be called once per process (via `sync.Once`). The first `Config.Connect()` call determines the retry and RLS configuration for all connections. See [Architecture — Design Decisions](./architecture.md#why-synconce-for-driver-registration) for details.
+Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings apply only to that session, whichever session connects first. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
+
+### `WithRetry` applies only to queries outside transactions
+
+`WithRetry` controls whether pgxretry re-runs a single query that fails with a retryable error outside a transaction (autocommit, e.g., `session.DB().Exec(...)` outside `Transaction`).
+
+Queries in a transaction are never re-run by the driver, with retry enabled or disabled. A retryable error there is returned as `pgxretry.ErrRetryableInTx`, and `TransactionManager` resets the connection and runs the whole transaction function again in a new transaction. This also holds with `WithRetry(false, ...)`, unless RLS is also disabled: with both retry and RLS disabled, the session does not use pgxretry, so errors are not wrapped and `TransactionManager` does not re-run the transaction.

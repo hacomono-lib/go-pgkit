@@ -20,9 +20,6 @@ import (
 	"github.com/hacomono-lib/go-pgkit/rlsconn"
 )
 
-// registerOnce ensures driver registration is called only once
-var registerOnce sync.Once
-
 type txKey struct{}
 
 // Session provides database connection and transaction functionality.
@@ -102,6 +99,9 @@ func newSession(config *Config) *Session {
 	// Configure retry.
 	// When RLS is enabled, pgxretry's ConnectorWrapper is used to inject rlsconn,
 	// so retryConfig is created even if retry itself is disabled.
+	// In that case DisableRetry stops pgxretry from re-running a query that fails outside
+	// a transaction, while retryable errors in transactions are still wrapped with
+	// ErrRetryableInTx, so TransactionManager can re-run the whole transaction.
 	var retryConfig *pgxretry.Config
 	if config.EnableRetry || config.EnableRLS {
 		retryConfig = &pgxretry.Config{
@@ -109,11 +109,7 @@ func newSession(config *Config) *Session {
 			InitialBackoff: time.Duration(config.RetryBackoff) * time.Millisecond,
 			BackoffFactor:  2.0,
 			MaxBackoff:     5 * time.Second,
-		}
-
-		// When retry is explicitly disabled, set MaxRetries to 0
-		if !config.EnableRetry {
-			retryConfig.MaxRetries = 0
+			DisableRetry:   !config.EnableRetry,
 		}
 
 		retryConfig.WithSlog(slogLogger)
@@ -447,36 +443,17 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 	var db *gorm.DB
 	var err error
 
-	// 1. Create dialector (with or without retry driver)
+	// 1. Create dialector with the session's own connector
 	var dialector gorm.Dialector
 
-	if s.retryConfig != nil {
-		if s.retryConfig.ConnectionResetFunc == nil {
-			s.retryConfig.WithConnectionReset(s.ResetConnection)
-		}
-
-		// Set RLS connector wrapper so that ResetSession is called on new connections
-		if s.rlsConfig != nil && s.retryConfig.ConnectorWrapper == nil {
-			rlsConfig := s.rlsConfig // capture for closure
-			s.retryConfig.WithConnectorWrapper(func(baseConnector driver.Connector) driver.Connector {
-				return rlsconn.NewRLSConnector(baseConnector, rlsConfig)
-			})
-		}
-
-		// Register the driver (once per process).
-		// Note: the first registration's config is used for all connections.
-		// When RLS is enabled, the first session to connect must have RLS configured.
-		registerOnce.Do(func() {
-			pgxretry.Register(s.retryConfig)
-			if s.config.Logger != nil {
-				s.config.Logger.Info("database driver registered", "driver", pgxretry.DriverName)
-			}
-		})
-
-		dialector = postgres.New(postgres.Config{
-			DriverName: pgxretry.DriverName,
-			DSN:        s.config.dsn(),
-		})
+	connector, err := s.newConnector()
+	if err != nil {
+		return nil, nil, ErrConnection.WithReason("[%s] failed to create connector", s.role).WithCause(err)
+	}
+	var connectorDB *sql.DB
+	if connector != nil {
+		connectorDB = sql.OpenDB(connector)
+		dialector = postgres.New(postgres.Config{Conn: connectorDB})
 	} else {
 		dialector = postgres.Open(s.config.dsn())
 	}
@@ -489,6 +466,9 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 
 	db, err = gormOpener(dialector, s.gormConfig)
 	if err != nil {
+		if connectorDB != nil {
+			_ = connectorDB.Close()
+		}
 		return nil, nil, ErrConnection.WithReason("[%s] failed to connect to database", s.role).WithCause(err)
 	}
 
@@ -506,6 +486,28 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 	s.configureConnectionPool(sqlDB)
 
 	return db, sqlDB, nil
+}
+
+// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled.
+// Each session has its own connector, so its retry and RLS configs are not shared with other sessions.
+func (s *Session) newConnector() (driver.Connector, error) {
+	if s.retryConfig == nil {
+		return nil, nil
+	}
+
+	if s.retryConfig.ConnectionResetFunc == nil {
+		s.retryConfig.WithConnectionReset(s.ResetConnection)
+	}
+
+	// Set RLS connector wrapper so that ResetSession is called on new connections
+	if s.rlsConfig != nil && s.retryConfig.ConnectorWrapper == nil {
+		rlsConfig := s.rlsConfig // capture for closure
+		s.retryConfig.WithConnectorWrapper(func(baseConnector driver.Connector) driver.Connector {
+			return rlsconn.NewRLSConnector(baseConnector, rlsConfig)
+		})
+	}
+
+	return pgxretry.NewConnector(s.config.dsn(), s.retryConfig)
 }
 
 // configureConnectionPool applies pool settings to the sql.DB.

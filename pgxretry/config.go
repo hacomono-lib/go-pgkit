@@ -45,6 +45,15 @@ type Config struct {
 	// on new connections.
 	// Example: rlsconn.NewRLSConnector(baseConnector, rlsConfig)
 	ConnectorWrapper ConnectorWrapper
+
+	// DisableRetry stops the driver from re-running a query (Query, Exec or Prepare)
+	// that fails with a retryable error outside a transaction: the error is returned
+	// after one attempt, and ConnectionResetFunc is not called.
+	// Queries in a transaction are never re-run by the driver either way; their retryable
+	// errors are still wrapped with ErrRetryableInTx, so a caller that re-runs the whole
+	// transaction (e.g., conn.TransactionManager) keeps working.
+	// MaxRetries: 0 cannot be used for this, because WithDefaults replaces it with the default.
+	DisableRetry bool
 }
 
 // DefaultConfig returns the default configuration
