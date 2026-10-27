@@ -73,6 +73,33 @@ rows, err := sm.Reader().QueryDB().NamedQueryContext(ctx,
 
 See [conn/README.md](./conn) for the full API reference including all QueryDB methods, connection pool management, and connection reset.
 
+### 6. RDS IAM database authentication
+
+Connect to Amazon RDS / Aurora PostgreSQL with an IAM auth token instead of a password. `rdsiam` sets a fresh token before each new connection.
+For example, switch between password and IAM with an environment variable:
+
+```go
+var beforeConnect func(context.Context, *pgx.ConnConfig) error // nil: connect with DB_PASSWORD
+if useIAM, _ := strconv.ParseBool(os.Getenv("DB_ENABLE_IAM_AUTH")); useIAM {
+    awsCfg, err := config.LoadDefaultConfig(ctx) // github.com/aws/aws-sdk-go-v2/config
+    if err != nil {
+        log.Fatal(err)
+    }
+    ts, err := rdsiam.NewTokenSource(awsCfg)
+    if err != nil {
+        log.Fatal(err)
+    }
+    beforeConnect = rdsiam.BeforeConnect(ts)
+}
+
+writerCfg := conn.NewConfig(conn.WithEnvVars("writer"), conn.WithBeforeConnect(beforeConnect))
+readerCfg := conn.NewConfig(conn.WithEnvVars("reader"), conn.WithBeforeConnect(beforeConnect))
+```
+
+- The DB user is granted `rds_iam`, and the AWS role is allowed `rds-db:connect`. `DB_PASSWORD` is not needed; if it is set, it is overwritten with the token.
+- `BeforeConnect` applies only to the sessions it is passed to, so sessions that connect with a password can be used in the same process.
+- A token is reused for each host, port and user, and rebuilt 1 minute before it expires (15 minutes after signing, or earlier when the signing credentials expire).
+
 ## Features
 
 - **Session management** with Writer/Reader separation built on GORM and sqlx
@@ -82,11 +109,14 @@ See [conn/README.md](./conn) for the full API reference including all QueryDB me
 - **Transaction support** with context propagation and automatic rollback on panic
 - **Named query support** via sqlx (`NamedQueryContext`, `NamedExecContext`)
 - **Environment variable** configuration with role-based overrides
+- **RDS IAM database authentication** with token reuse and refresh (`rdsiam`)
 - **Structured logging** with slog
 
 ## Dependencies
 
 The `conn` package requires **GORM** (`gorm.io/gorm`), **sqlx** (`github.com/jmoiron/sqlx`), and **go-errorsx** (`github.com/hacomono-lib/go-errorsx`) as core dependencies. `Session.DB()` returns `*gorm.DB`, and `Session.QueryDB()` provides sqlx-based named query support. Error types (`ErrConnection`, `ErrTransaction`, `ErrInitialization`) are built on go-errorsx.
+
+The `rdsiam` package additionally requires the AWS SDK for Go v2 (`github.com/aws/aws-sdk-go-v2`). It is only built when `rdsiam` is imported.
 
 The lower-level packages (`pgxretry`, `rlsconn`, `rlsctx`) depend only on `database/sql/driver` interfaces and can be used independently without GORM.
 
@@ -146,6 +176,7 @@ func main() {
 | [`pgxretry`](./pgxretry) | PostgreSQL driver wrapper with automatic retry on transient errors |
 | [`rlsconn`](./rlsconn) | `database/sql` Connector/SessionResetter wrapper for RLS session variables |
 | [`rlsctx`](#rlsctx) | Context helpers for tenant ID and user ID (see below) |
+| [`rdsiam`](#6-rds-iam-database-authentication) | Amazon RDS IAM database authentication tokens for `conn` (see above) |
 
 ## Architecture
 
