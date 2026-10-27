@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"sync"
 
+	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/stdlib"
 )
 
@@ -24,7 +25,7 @@ var (
 //
 // Note: The driver can only be registered once per process. The first caller's
 // configuration (including ConnectorWrapper) will be used for all subsequent connections.
-// For RLS, ensure the first session to connect has RLS enabled.
+// To use a different configuration for each connection pool, use NewConnector instead.
 func Register(config *Config) *Driver {
 	driverMu.Lock()
 	defer driverMu.Unlock()
@@ -83,19 +84,41 @@ func (d *Driver) OpenConnector(name string) (driver.Connector, error) {
 	}, nil
 }
 
+// NewConnector returns a connector that opens retryable connections to dsn.
+// Unlike Register, config is used only by this connector, so each connection pool
+// (e.g., each conn.Session) can have its own ConnectorWrapper and ConnectionResetFunc.
+// Use it with sql.OpenDB.
+func NewConnector(dsn string, config *Config) (driver.Connector, error) {
+	pgxConfig, err := pgx.ParseConfig(dsn)
+	if err != nil {
+		return nil, WrapDriverError(err, "failed to parse dsn")
+	}
+	return &connector{
+		driver: NewDriver(config),
+		dsn:    dsn,
+		base:   stdlib.GetConnector(*pgxConfig),
+	}, nil
+}
+
 // connector implements driver.Connector
 type connector struct {
 	driver *Driver
 	dsn    string
+	// base is the pgx connector created once by NewConnector, which parses dsn only once.
+	// If nil (opened through the registered driver), it is created on each Connect.
+	base driver.Connector
 }
 
 // Connect implements driver.Connector
 func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 	// Create base pgx connector to honor context
-	pgxDriver := &stdlib.Driver{}
-	pgxConnector, err := pgxDriver.OpenConnector(c.dsn)
-	if err != nil {
-		return nil, WrapDriverError(err, "failed to create pgx connector")
+	var err error
+	pgxConnector := c.base
+	if pgxConnector == nil {
+		pgxConnector, err = (&stdlib.Driver{}).OpenConnector(c.dsn)
+		if err != nil {
+			return nil, WrapDriverError(err, "failed to create pgx connector")
+		}
 	}
 
 	// Get current config with read lock

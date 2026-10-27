@@ -170,7 +170,7 @@ See [docs/architecture.md](../docs/architecture.md) for the full reset flow.
 
 ## Caveats
 
-- **Driver registration is process-global**: The first `Config.Connect()` call registers the pgxretry driver with its retry and RLS settings. All subsequent connections in the process use the same driver configuration. If RLS is enabled, the first connection must have RLS configured.
+- **Each session has its own connector**: Retry and RLS settings apply only to the session they are configured on, whichever session connects first. When retry is disabled (`WithRetry(false, ...)`), the session does not go through pgxretry.
 - **`sslmode` defaults to `disable`**. Override with `WithSSLMode` or `DB_SSLMODE`. See [docs/configuration.md — Caveats](../docs/configuration.md#caveats).
 - **GORM prepared statements are disabled** to ensure per-request context propagation for RLS session variables.
 

@@ -58,7 +58,7 @@ Application (GORM / sqlx)
 
 ### Connector Chain
 
-1. `database/sql` opens a connection via the registered `driver.Connector`
+1. `database/sql` opens a connection via the session's `driver.Connector` (`sql.OpenDB`)
 2. `pgxretry.Connector` delegates to its `ConnectorWrapper`
 3. `rlsconn.RLSConnector` creates a base connection, wraps it with `RLSSessionResetter`, and calls `ResetSession` to set initial session variables
 4. The wrapped connection is returned to `pgxretry`, which wraps it in `retryableConn`
@@ -85,17 +85,19 @@ Config.Connect()
     │
     ▼
 newSession(config)
-    ├── creates pgxretry.Config (if retry or RLS enabled)
-    ├── creates rlsconn.Config (if RLS enabled with session vars)
-    └── sets ConnectionResetFunc, ConnectorWrapper
+    ├── creates pgxretry.Config (if retry enabled)
+    └── creates rlsconn.Config (if RLS enabled with session vars)
     │
     ▼
 session.connect()
     │
-    ├── pgxretry.Register(retryConfig)     ← registers driver (once per process)
+    ├── newConnector()                     ← the session's own connector
+    │       ├── retry enabled: pgxretry.NewConnector(dsn, retryConfig)
+    │       │       └── sets ConnectionResetFunc, ConnectorWrapper (rlsconn)
+    │       └── retry disabled: pgx/v5/stdlib connector, wrapped with rlsconn if RLS is enabled
     │
-    ├── postgres.New(DriverName: "pgxretry", DSN: ...)
-    │       └── creates GORM dialector with pgxretry driver
+    ├── postgres.New(Conn: sql.OpenDB(connector))
+    │       └── creates GORM dialector with the session's connection pool
     │
     ├── gormOpener(dialector, gormConfig)   ← opens GORM connection
     │
@@ -105,12 +107,9 @@ session.connect()
 Session ready (GORM DB + QueryDB)
 ```
 
-### Driver Registration
+### Connector per Session
 
-The pgxretry driver is registered exactly once per process via `sync.Once`. The first caller's configuration is used for all subsequent connections. This means:
-
-- If RLS is enabled, the first session to connect must have RLS configured
-- The `ConnectorWrapper` from the first registration applies to all connections
+Each session opens its connection pool with its own `driver.Connector`, so the retry config, `ConnectorWrapper` (RLS) and `ConnectionResetFunc` of a session apply only to that session. The global `"pgxretry"` driver (`pgxretry.Register`) is not used by `conn`.
 
 ## Session Model
 
@@ -212,11 +211,11 @@ go-pgkit is designed for multi-tenant applications where tenant isolation is a s
 
 If your application is not multi-tenant, disable RLS explicitly.
 
-### Why `sync.Once` for driver registration?
+### Why a connector per session?
 
-`database/sql.Register` requires a globally unique driver name and panics on duplicate registration. Since pgxretry registers under the name `"pgxretry"`, it can only be registered once per process. `sync.Once` ensures this.
+`database/sql.Register` requires a globally unique driver name, so a registered driver has one configuration per process. If sessions shared the registered `"pgxretry"` driver, the **first** `Config.Connect()` call would determine the retry settings, `ConnectorWrapper` and `ConnectionResetFunc` for every session: a session with `WithRLS(false)` would still get RLS, and a retryable error on the reader would reset the writer.
 
-The consequence is that the **first** `Config.Connect()` call determines the driver configuration (retry settings, ConnectorWrapper) for all subsequent connections in the process. This is a deliberate constraint — it matches how `database/sql` drivers work and avoids surprising behavior from mid-process reconfiguration.
+`sql.OpenDB` takes a `driver.Connector` directly, without registration, so each session builds its own connector (`pgxretry.NewConnector`) and its settings stay with it.
 
 ### Why does `sslmode` default to `disable`?
 

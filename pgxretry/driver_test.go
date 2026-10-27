@@ -3,13 +3,16 @@ package pgxretry_test
 import (
 	"context"
 	"database/sql"
+	"database/sql/driver"
 	"errors"
+	"io"
 	"os"
 	"testing"
 	"time"
 
 	"github.com/hacomono-lib/go-pgkit/pgxretry"
 
+	"github.com/stretchr/testify/mock"
 	"github.com/stretchr/testify/suite"
 )
 
@@ -157,5 +160,64 @@ func (s *DriverTestSuite) TestConnectorContextHandling() {
 		// Error should be database-related, not context-related
 		s.False(errors.Is(err, context.Canceled), "Error should not be context cancellation")
 		s.False(errors.Is(err, context.DeadlineExceeded), "Error should not be context timeout")
+	})
+}
+
+// fakeConnector returns conn on Connect.
+type fakeConnector struct {
+	driver.Connector
+	conn driver.Conn
+}
+
+func (c *fakeConnector) Connect(context.Context) (driver.Conn, error) {
+	return c.conn, nil
+}
+
+func (s *DriverTestSuite) TestNewConnector() {
+	s.Run("returns an error for an invalid dsn", func() {
+		_, err := pgxretry.NewConnector("port=invalid", pgxretry.DefaultConfig())
+		s.Error(err)
+	})
+
+	s.Run("uses only its own ConnectorWrapper and ConnectionResetFunc", func() {
+		newConnector := func(conn driver.Conn, resets *int) driver.Connector {
+			config := pgxretry.DefaultConfig()
+			config.MaxRetries = 1
+			config.InitialBackoff = time.Millisecond
+			config.WithConnectorWrapper(func(base driver.Connector) driver.Connector {
+				return &fakeConnector{Connector: base, conn: conn}
+			})
+			config.WithConnectionReset(func(context.Context) error {
+				*resets++
+				return nil
+			})
+			connector, err := pgxretry.NewConnector("host=invalid-test-host port=5432 user=test dbname=test sslmode=disable", config)
+			s.Require().NoError(err)
+			return connector
+		}
+		exec := func(connector driver.Connector) error {
+			conn, err := connector.Connect(context.Background())
+			s.Require().NoError(err)
+			_, err = conn.(driver.ExecerContext).ExecContext(context.Background(), "SELECT 1", nil)
+			return err
+		}
+
+		// A fails once with a retryable error, then succeeds on retry.
+		connA := &mockConnExecer{}
+		connA.On("ExecContext", mock.Anything, "SELECT 1", mock.Anything).Return(nil, io.EOF).Once()
+		connA.On("ExecContext", mock.Anything, "SELECT 1", mock.Anything).Return(driver.RowsAffected(1), nil).Once()
+		connB := &mockConnExecer{}
+		connB.On("ExecContext", mock.Anything, "SELECT 1", mock.Anything).Return(driver.RowsAffected(1), nil).Once()
+
+		var resetsA, resetsB int
+		connectorA, connectorB := newConnector(connA, &resetsA), newConnector(connB, &resetsB)
+
+		s.NoError(exec(connectorA))
+		s.NoError(exec(connectorB))
+
+		connA.AssertExpectations(s.T())
+		connB.AssertExpectations(s.T())
+		s.Equal(1, resetsA)
+		s.Equal(0, resetsB)
 	})
 }

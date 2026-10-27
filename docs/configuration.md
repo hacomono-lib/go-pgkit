@@ -174,6 +174,6 @@ Host, user, password, database name, `sslmode` and `{PREFIX}SCHEMA` are single-q
 
 GORM's `PrepareStmt` mode is not enabled. This ensures that the request context (carrying tenant/user IDs) is correctly passed through `database/sql` to `SessionResetter.ResetSession(ctx)` on every query. Enabling prepared statements would bypass this context propagation.
 
-### Driver registration is process-global
+### Each session has its own connector
 
-`pgxretry.Register` can only be called once per process (via `sync.Once`). The first `Config.Connect()` call determines the retry and RLS configuration for all connections. See [Architecture — Design Decisions](./architecture.md#why-synconce-for-driver-registration) for details.
+Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings apply only to that session, whichever session connects first. When retry is disabled, the session does not go through pgxretry. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
