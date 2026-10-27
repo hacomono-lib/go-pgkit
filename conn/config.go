@@ -1,11 +1,14 @@
 package conn
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/hacomono-lib/go-pgkit/rlsconn"
 	"github.com/hacomono-lib/go-pgkit/rlsctx"
@@ -61,6 +64,10 @@ type Config struct {
 	// SpanStarter is an optional span starter for QueryDB operations.
 	// If nil, no spans are created.
 	SpanStarter SpanStarter
+
+	// BeforeConnect is an optional function called before each new physical connection of this session
+	// is opened. It can change the connection config, e.g., to set an RDS IAM auth token as the password.
+	BeforeConnect func(ctx context.Context, cc *pgx.ConnConfig) error
 
 	// envPrefix is the environment variable prefix used by WithEnvVars/WithEnvVarsWithPrefix.
 	// Used by dsn() to read TIMEZONE and SCHEMA env vars with the correct prefix.
@@ -302,6 +309,13 @@ func WithoutTrace() ConfigOption {
 func WithGormOpener(opener GormOpener) ConfigOption {
 	return func(c *Config) {
 		c.GormOpener = opener
+	}
+}
+
+// WithBeforeConnect sets a function called before each new physical connection of the session is opened.
+func WithBeforeConnect(fn func(ctx context.Context, cc *pgx.ConnConfig) error) ConfigOption {
+	return func(c *Config) {
+		c.BeforeConnect = fn
 	}
 }
 

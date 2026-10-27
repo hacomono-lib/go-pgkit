@@ -87,8 +87,9 @@ func (d *Driver) OpenConnector(name string) (driver.Connector, error) {
 // NewConnector returns a connector that opens retryable connections to dsn.
 // Unlike Register, config is used only by this connector, so each connection pool
 // (e.g., each conn.Session) can have its own ConnectorWrapper and ConnectionResetFunc.
+// opts are passed to the underlying pgx connector (e.g., stdlib.OptionBeforeConnect).
 // Use it with sql.OpenDB.
-func NewConnector(dsn string, config *Config) (driver.Connector, error) {
+func NewConnector(dsn string, config *Config, opts ...stdlib.OptionOpenDB) (driver.Connector, error) {
 	pgxConfig, err := pgx.ParseConfig(dsn)
 	if err != nil {
 		return nil, WrapDriverError(err, "failed to parse dsn")
@@ -96,7 +97,7 @@ func NewConnector(dsn string, config *Config) (driver.Connector, error) {
 	return &connector{
 		driver: NewDriver(config),
 		dsn:    dsn,
-		base:   stdlib.GetConnector(*pgxConfig),
+		base:   stdlib.GetConnector(*pgxConfig, opts...),
 	}, nil
 }
 

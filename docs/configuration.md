@@ -39,6 +39,7 @@ cfg := conn.NewConfig(
 | `WithGormOpener(opener GormOpener)` | Custom GORM connection opener (e.g., for APM) |
 | `WithGormCallbackRegistrar(registrar GormCallbackRegistrar)` | Register GORM callbacks (e.g., for APM resource naming) |
 | `WithSpanStarter(starter SpanStarter)` | Custom span starter for QueryDB tracing |
+| `WithBeforeConnect(fn func(context.Context, *pgx.ConnConfig) error)` | Change the connection config before each new connection of the session (e.g., set an RDS IAM auth token as the password) |
 
 Additionally, `Config` has a method (not a `ConfigOption` function):
 
@@ -177,7 +178,7 @@ GORM's `PrepareStmt` mode is not enabled. This ensures that the request context 
 
 ### Each session has its own connector
 
-Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings apply only to that session, whichever session connects first. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
+Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings and `BeforeConnect` apply only to that session, whichever session connects first. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
 
 ### `WithRetry` applies only to queries outside transactions
 

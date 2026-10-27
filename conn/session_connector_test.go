@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,6 +90,35 @@ func TestSessionConnector_RLSPerSession(t *testing.T) {
 			got, err = noRLS.GetCurrentTenantID(ctx)
 			require.NoError(t, err)
 			assert.Empty(t, got)
+		})
+	}
+}
+
+// BeforeConnect is called for the connections of the session that sets it, with or without pgxretry.
+func TestSessionConnector_BeforeConnect(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ConfigOption
+	}{
+		{name: "retry enabled", opts: nil},
+		{name: "retry disabled", opts: []ConfigOption{WithRetry(false, 0, 0)}},
+		{name: "retry and RLS disabled", opts: []ConfigOption{WithRetry(false, 0, 0), WithRLS(false)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var gotUser string
+			hook := func(ctx context.Context, cc *pgx.ConnConfig) error {
+				gotUser = cc.User
+				return nil
+			}
+			cfg := NewConfig(append([]ConfigOption{WithEnvVars("writer"), WithBeforeConnect(hook)}, tt.opts...)...)
+
+			// Connect opens a connection (GORM pings on open), which calls the hook.
+			s, err := cfg.Connect()
+			require.NoError(t, err)
+			t.Cleanup(func() { _ = s.Close() })
+
+			assert.Equal(t, cfg.User, gotUser)
 		})
 	}
 }
