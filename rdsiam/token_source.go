@@ -73,8 +73,9 @@ func (t *TokenSource) Token(ctx context.Context, host string, port uint16, user 
 	endpoint := net.JoinHostPort(host, strconv.Itoa(int(port)))
 	key := user + "@" + endpoint
 	t.mu.Lock()
-	defer t.mu.Unlock()
-	if tok, ok := t.tokens[key]; ok && t.now().Before(tok.refreshAt) {
+	tok, ok := t.tokens[key]
+	t.mu.Unlock()
+	if ok && t.now().Before(tok.refreshAt) {
 		return tok.value, nil
 	}
 
@@ -93,6 +94,8 @@ func (t *TokenSource) Token(ctx context.Context, host string, port uint16, user 
 	if credsRefreshAt := creds.Expires.Add(-refreshMargin); creds.CanExpire && credsRefreshAt.Before(refreshAt) {
 		refreshAt = credsRefreshAt
 	}
+	t.mu.Lock()
 	t.tokens[key] = token{value: value, refreshAt: refreshAt}
+	t.mu.Unlock()
 	return value, nil
 }
