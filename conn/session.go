@@ -468,6 +468,12 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 
 	db, err = gormOpener(dialector, s.gormConfig)
 	if err != nil {
+		// gorm.Open returns the *gorm.DB with its connection pool even when the ping fails.
+		if db != nil {
+			if sqlDB, dbErr := db.DB(); dbErr == nil {
+				_ = sqlDB.Close()
+			}
+		}
 		if connectorDB != nil {
 			_ = connectorDB.Close()
 		}

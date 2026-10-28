@@ -170,7 +170,7 @@ Valid values: `disable`, `allow`, `prefer`, `require`, `verify-ca`, `verify-full
 
 Host, user, password, database name, `sslmode` and `{PREFIX}SCHEMA` are single-quoted in the DSN, so spaces, quotes and backslashes in them (e.g. in a password) reach the server as-is. Do not escape them yourself, and do not use one of them to pass extra connection parameters (e.g. `sslmode=verify-full sslrootcert=...`); the whole string becomes the value.
 
-`{PREFIX}TIMEZONE` is the exception: it is written unquoted because GORM's postgres driver reads it from the raw DSN. Set it to a plain time zone name such as `Asia/Tokyo`.
+`{PREFIX}TIMEZONE` is the exception: it is written unquoted because, when a session is opened with `postgres.Open(dsn)` instead of its own connector (see [Connection Lifecycle](./architecture.md#connection-lifecycle)), GORM's postgres driver reads it from the raw DSN with a regex that would keep the quotes. Set it to a plain time zone name such as `Asia/Tokyo`.
 
 ### GORM prepared statements are disabled
 
