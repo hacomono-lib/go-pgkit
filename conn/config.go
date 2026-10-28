@@ -1,11 +1,14 @@
 package conn
 
 import (
+	"context"
 	"fmt"
 	"log/slog"
 	"os"
 	"strconv"
 	"strings"
+
+	"github.com/jackc/pgx/v5"
 
 	"github.com/hacomono-lib/go-pgkit/rlsconn"
 	"github.com/hacomono-lib/go-pgkit/rlsctx"
@@ -62,6 +65,16 @@ type Config struct {
 	// If nil, no spans are created.
 	SpanStarter SpanStarter
 
+	// BeforeConnect is an optional function called before each new physical connection of this session
+	// is opened. It can change the connection config, e.g., to set an RDS IAM auth token as the password.
+	//
+	// cc is a shallow copy of the session's config: assigning a field such as Password is safe, but maps and
+	// pointers (RuntimeParams, TLSConfig, Fallbacks) are shared by all connections of the session.
+	// Copy cc first (*cc = *cc.Copy()) to change them.
+	// ConnectTimeout does not cover the hook, and ctx may have no deadline, so bound any network call
+	// in the hook with its own timeout.
+	BeforeConnect func(ctx context.Context, cc *pgx.ConnConfig) error
+
 	// envPrefix is the environment variable prefix used by WithEnvVars/WithEnvVarsWithPrefix.
 	// Used by dsn() to read TIMEZONE and SCHEMA env vars with the correct prefix.
 	// Defaults to "DB_".
@@ -102,9 +115,9 @@ func (c *Config) dsn() string {
 	if connectTimeout <= 0 {
 		connectTimeout = 10
 	}
-	// When retry and RLS are both disabled, gorm's postgres driver extracts TimeZone from the raw DSN
-	// with an unanchored regex. It is unquoted so the regex does not keep the quotes, and placed first
-	// so the regex cannot match "timezone=" inside a quoted value such as the password.
+	// When retry and RLS are both disabled and BeforeConnect is not set, gorm's postgres driver extracts
+	// TimeZone from the raw DSN with an unanchored regex. It is unquoted so the regex does not keep the quotes,
+	// and placed first so the regex cannot match "timezone=" inside a quoted value such as the password.
 	// Time zone names contain no characters that need quoting.
 	return fmt.Sprintf(
 		"TimeZone=%s host=%s user=%s password=%s dbname=%s port=%d sslmode=%s connect_timeout=%d search_path=%s",
@@ -302,6 +315,13 @@ func WithoutTrace() ConfigOption {
 func WithGormOpener(opener GormOpener) ConfigOption {
 	return func(c *Config) {
 		c.GormOpener = opener
+	}
+}
+
+// WithBeforeConnect sets a function called before each new physical connection of the session is opened.
+func WithBeforeConnect(fn func(ctx context.Context, cc *pgx.ConnConfig) error) ConfigOption {
+	return func(c *Config) {
+		c.BeforeConnect = fn
 	}
 }
 

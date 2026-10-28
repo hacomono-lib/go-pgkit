@@ -261,6 +261,6 @@ pgxretry.Register(config)
 ## Important Notes
 
 - **Register once**: Call `pgxretry.Register()` once at application startup. The driver is registered globally via `database/sql.Register` and subsequent calls are ignored.
-- **Per-pool configuration**: To use a different configuration for each connection pool, create a connector with `pgxretry.NewConnector(dsn, config)` and open it with `sql.OpenDB` instead of registering the driver. The `conn` package does this for each session.
+- **Per-pool configuration**: To use a different configuration for each connection pool, create a connector with `pgxretry.NewConnector(dsn, config)` and open it with `sql.OpenDB` instead of registering the driver. Options for the underlying pgx connector, such as `stdlib.OptionBeforeConnect`, can be passed as extra arguments. The `conn` package does this for each session.
 - **Transaction retries are your responsibility**: pgxretry does not retry within transactions. Check for `ErrRetryableInTx` and retry the entire transaction at the application level.
 - When using pgxretry through the `conn` package, retry configuration is managed by `conn.Config`. See [docs/configuration.md](../docs/configuration.md) for details.

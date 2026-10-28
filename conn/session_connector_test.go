@@ -2,10 +2,12 @@ package conn
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"github.com/google/uuid"
+	"github.com/jackc/pgx/v5"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,6 +91,53 @@ func TestSessionConnector_RLSPerSession(t *testing.T) {
 			got, err = noRLS.GetCurrentTenantID(ctx)
 			require.NoError(t, err)
 			assert.Empty(t, got)
+		})
+	}
+}
+
+// BeforeConnect changes the config of the connections of the session that sets it, and only of them,
+// whichever session connects first, with or without pgxretry.
+func TestSessionConnector_BeforeConnect(t *testing.T) {
+	tests := []struct {
+		name string
+		opts []ConfigOption
+	}{
+		{name: "retry enabled", opts: nil},
+		{name: "retry disabled", opts: []ConfigOption{WithRetry(false, 0, 0)}},
+		{name: "retry and RLS disabled", opts: []ConfigOption{WithRetry(false, 0, 0), WithRLS(false)}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := NewConfig(WithEnvVars("writer"))
+			var calls atomic.Int64
+			hook := func(ctx context.Context, cc *pgx.ConnConfig) error {
+				calls.Add(1)
+				cc.Password = env.Password
+				return nil
+			}
+			// Connect opens a connection (GORM pings on open).
+			connect := func(opts ...ConfigOption) error {
+				s, err := NewConfig(append(append([]ConfigOption{WithEnvVars("writer")}, tt.opts...), opts...)...).Connect()
+				if err == nil {
+					t.Cleanup(func() { _ = s.Close() })
+				}
+				return err
+			}
+
+			// The test database rejects a wrong password.
+			require.Error(t, connect(WithCredentials(env.User, "wrong")))
+
+			// A session without the hook connects first.
+			require.NoError(t, connect())
+
+			// The session connects only if the hook's password replaces the wrong one.
+			require.NoError(t, connect(WithCredentials(env.User, "wrong"), WithBeforeConnect(hook)))
+			calledWithHook := calls.Load()
+			assert.Equal(t, int64(1), calledWithHook)
+
+			// The hook is not called for a session without it.
+			require.NoError(t, connect())
+			assert.Equal(t, calledWithHook, calls.Load())
 		})
 	}
 }

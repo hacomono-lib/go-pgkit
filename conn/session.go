@@ -11,6 +11,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
 	"github.com/jmoiron/sqlx"
 	"gorm.io/driver/postgres"
 	"gorm.io/gorm"
@@ -494,11 +496,24 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 	return db, sqlDB, nil
 }
 
-// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled.
-// Each session has its own connector, so its retry and RLS configs are not shared with other sessions.
+// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled
+// and BeforeConnect is not set.
+// Each session has its own connector, so its retry and RLS configs and BeforeConnect are not shared with other sessions.
 func (s *Session) newConnector() (driver.Connector, error) {
+	var pgxOpts []stdlib.OptionOpenDB
+	if s.config.BeforeConnect != nil {
+		pgxOpts = append(pgxOpts, stdlib.OptionBeforeConnect(s.config.BeforeConnect))
+	}
+
 	if s.retryConfig == nil {
-		return nil, nil
+		if len(pgxOpts) == 0 {
+			return nil, nil
+		}
+		pgxConfig, err := pgx.ParseConfig(s.config.dsn())
+		if err != nil {
+			return nil, pgxretry.WrapDriverError(err, "failed to parse dsn")
+		}
+		return stdlib.GetConnector(*pgxConfig, pgxOpts...), nil
 	}
 
 	if s.retryConfig.ConnectionResetFunc == nil {
@@ -513,7 +528,7 @@ func (s *Session) newConnector() (driver.Connector, error) {
 		})
 	}
 
-	return pgxretry.NewConnector(s.config.dsn(), s.retryConfig)
+	return pgxretry.NewConnector(s.config.dsn(), s.retryConfig, pgxOpts...)
 }
 
 // configureConnectionPool applies pool settings to the sql.DB.
