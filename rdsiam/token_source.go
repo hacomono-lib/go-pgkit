@@ -15,6 +15,7 @@ import (
 
 	"github.com/aws/aws-sdk-go-v2/aws"
 	"github.com/aws/aws-sdk-go-v2/feature/rds/auth"
+	"golang.org/x/sync/singleflight"
 )
 
 const (
@@ -46,6 +47,7 @@ type TokenSource struct {
 
 	mu     sync.Mutex
 	tokens map[string]token
+	group  singleflight.Group
 }
 
 // NewTokenSource creates a TokenSource that signs tokens with the region and credentials of cfg
@@ -79,6 +81,23 @@ func (t *TokenSource) Token(ctx context.Context, host string, port uint16, user 
 		return tok.value, nil
 	}
 
+	// Concurrent calls for the same key share one build. It runs without the caller's cancellation,
+	// so that one caller giving up does not fail the others.
+	ch := t.group.DoChan(key, func() (any, error) {
+		return t.rebuild(context.WithoutCancel(ctx), endpoint, user, key)
+	})
+	select {
+	case res := <-ch:
+		if res.Err != nil {
+			return "", res.Err
+		}
+		return res.Val.(string), nil
+	case <-ctx.Done():
+		return "", ctx.Err()
+	}
+}
+
+func (t *TokenSource) rebuild(ctx context.Context, endpoint, user, key string) (string, error) {
 	creds, err := t.creds.Retrieve(ctx)
 	if err != nil {
 		return "", fmt.Errorf("rdsiam: retrieve credentials: %w", err)
