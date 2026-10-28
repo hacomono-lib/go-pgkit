@@ -88,6 +88,8 @@ func (d *Driver) OpenConnector(name string) (driver.Connector, error) {
 // Unlike Register, config is used only by this connector, so each connection pool
 // (e.g., each conn.Session) can have its own ConnectorWrapper and ConnectionResetFunc.
 // opts are passed to the underlying pgx connector (e.g., stdlib.OptionBeforeConnect).
+// They are not used by connections opened through the connector's Driver() (e.g., db.Driver().Open(dsn)),
+// which database/sql and GORM do not call.
 // Use it with sql.OpenDB.
 func NewConnector(dsn string, config *Config, opts ...stdlib.OptionOpenDB) (driver.Connector, error) {
 	pgxConfig, err := pgx.ParseConfig(dsn)
