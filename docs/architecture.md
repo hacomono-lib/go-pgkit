@@ -92,12 +92,14 @@ newSession(config)
 session.connect()
     │
     ├── newConnector()                     ← the session's own connector
-    │       └── pgxretry.NewConnector(dsn, retryConfig)
-    │               └── sets ConnectionResetFunc, ConnectorWrapper (rlsconn)
+    │       └── pgxretry.NewConnector(dsn, retryConfig, pgx options)
+    │               └── sets ConnectionResetFunc, ConnectorWrapper (rlsconn),
+    │                   and stdlib.OptionBeforeConnect if BeforeConnect is set
     │
     ├── postgres.New(Conn: sql.OpenDB(connector))
     │       └── creates GORM dialector with the session's connection pool
-    │           (postgres.Open(dsn) if neither retry nor RLS is enabled)
+    │           (postgres.Open(dsn) if neither retry nor RLS is enabled and BeforeConnect is not set;
+    │            a pgx connector with BeforeConnect if only BeforeConnect is set)
     │
     ├── gormOpener(dialector, gormConfig)   ← opens GORM connection
     │

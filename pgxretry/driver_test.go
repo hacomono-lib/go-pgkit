@@ -10,6 +10,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/jackc/pgx/v5"
+	"github.com/jackc/pgx/v5/stdlib"
+
 	"github.com/hacomono-lib/go-pgkit/pgxretry"
 
 	"github.com/stretchr/testify/mock"
@@ -219,5 +222,21 @@ func (s *DriverTestSuite) TestNewConnector() {
 		connB.AssertExpectations(s.T())
 		s.Equal(1, resetsA)
 		s.Equal(0, resetsB)
+	})
+
+	s.Run("passes pgx options to the base connector", func() {
+		errHook := errors.New("hook failed")
+		var gotUser string
+		connector, err := pgxretry.NewConnector("host=invalid-test-host port=5432 user=iam_user dbname=test sslmode=disable", pgxretry.DefaultConfig(),
+			stdlib.OptionBeforeConnect(func(ctx context.Context, cc *pgx.ConnConfig) error {
+				gotUser = cc.User
+				return errHook
+			}))
+		s.Require().NoError(err)
+
+		_, err = connector.Connect(context.Background())
+
+		s.ErrorIs(err, errHook)
+		s.Equal("iam_user", gotUser)
 	})
 }
