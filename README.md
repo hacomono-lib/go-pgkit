@@ -96,6 +96,7 @@ writerCfg := conn.NewConfig(conn.WithEnvVars("writer"), conn.WithBeforeConnect(b
 readerCfg := conn.NewConfig(conn.WithEnvVars("reader"), conn.WithBeforeConnect(beforeConnect))
 ```
 
+- RDS rejects IAM logins without SSL, and `conn` defaults to `sslmode=disable`. Set `DB_SSLMODE` (or `WithSSLMode`) to `require` or a stricter mode such as `verify-full`. For `verify-full`, also set `PGSSLROOTCERT` to the RDS CA bundle (pgx reads it from the environment).
 - The DB user is granted `rds_iam`, and the AWS role is allowed `rds-db:connect`. `DB_PASSWORD` is not needed; if it is set, it is overwritten with the token.
 - `BeforeConnect` applies only to the sessions it is passed to, so sessions that connect with a password can be used in the same process.
 - A token is reused for each host, port and user, and rebuilt 1 minute before it expires (15 minutes after signing, or earlier when the signing credentials expire).
