@@ -505,7 +505,7 @@ func (s *Session) newConnector() (driver.Connector, error) {
 		}
 		pgxConfig, err := pgx.ParseConfig(s.config.dsn())
 		if err != nil {
-			return nil, err
+			return nil, pgxretry.WrapDriverError(err, "failed to parse dsn")
 		}
 		return stdlib.GetConnector(*pgxConfig, pgxOpts...), nil
 	}

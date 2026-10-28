@@ -2,6 +2,7 @@ package conn
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -94,7 +95,8 @@ func TestSessionConnector_RLSPerSession(t *testing.T) {
 	}
 }
 
-// BeforeConnect is called for the connections of the session that sets it, with or without pgxretry.
+// BeforeConnect changes the config of the connections of the session that sets it, and only of them,
+// whichever session connects first, with or without pgxretry.
 func TestSessionConnector_BeforeConnect(t *testing.T) {
 	tests := []struct {
 		name string
@@ -106,19 +108,36 @@ func TestSessionConnector_BeforeConnect(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			var gotUser string
+			env := NewConfig(WithEnvVars("writer"))
+			var calls atomic.Int64
 			hook := func(ctx context.Context, cc *pgx.ConnConfig) error {
-				gotUser = cc.User
+				calls.Add(1)
+				cc.Password = env.Password
 				return nil
 			}
-			cfg := NewConfig(append([]ConfigOption{WithEnvVars("writer"), WithBeforeConnect(hook)}, tt.opts...)...)
+			// Connect opens a connection (GORM pings on open).
+			connect := func(opts ...ConfigOption) error {
+				s, err := NewConfig(append(append([]ConfigOption{WithEnvVars("writer")}, tt.opts...), opts...)...).Connect()
+				if err == nil {
+					t.Cleanup(func() { _ = s.Close() })
+				}
+				return err
+			}
 
-			// Connect opens a connection (GORM pings on open), which calls the hook.
-			s, err := cfg.Connect()
-			require.NoError(t, err)
-			t.Cleanup(func() { _ = s.Close() })
+			// The test database rejects a wrong password.
+			require.Error(t, connect(WithCredentials(env.User, "wrong")))
 
-			assert.Equal(t, cfg.User, gotUser)
+			// A session without the hook connects first.
+			require.NoError(t, connect())
+
+			// The session connects only if the hook's password replaces the wrong one.
+			require.NoError(t, connect(WithCredentials(env.User, "wrong"), WithBeforeConnect(hook)))
+			calledWithHook := calls.Load()
+			assert.Equal(t, int64(1), calledWithHook)
+
+			// The hook is not called for a session without it.
+			require.NoError(t, connect())
+			assert.Equal(t, calledWithHook, calls.Load())
 		})
 	}
 }

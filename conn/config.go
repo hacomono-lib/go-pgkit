@@ -67,6 +67,12 @@ type Config struct {
 
 	// BeforeConnect is an optional function called before each new physical connection of this session
 	// is opened. It can change the connection config, e.g., to set an RDS IAM auth token as the password.
+	//
+	// cc is a shallow copy of the session's config: assigning a field such as Password is safe, but maps and
+	// pointers (RuntimeParams, TLSConfig, Fallbacks) are shared by all connections of the session.
+	// Copy cc first (*cc = *cc.Copy()) to change them.
+	// ConnectTimeout does not cover the hook, and ctx may have no deadline, so bound any network call
+	// in the hook with its own timeout.
 	BeforeConnect func(ctx context.Context, cc *pgx.ConnConfig) error
 
 	// envPrefix is the environment variable prefix used by WithEnvVars/WithEnvVarsWithPrefix.
@@ -109,9 +115,9 @@ func (c *Config) dsn() string {
 	if connectTimeout <= 0 {
 		connectTimeout = 10
 	}
-	// When retry and RLS are both disabled, gorm's postgres driver extracts TimeZone from the raw DSN
-	// with an unanchored regex. It is unquoted so the regex does not keep the quotes, and placed first
-	// so the regex cannot match "timezone=" inside a quoted value such as the password.
+	// When retry and RLS are both disabled and BeforeConnect is not set, gorm's postgres driver extracts
+	// TimeZone from the raw DSN with an unanchored regex. It is unquoted so the regex does not keep the quotes,
+	// and placed first so the regex cannot match "timezone=" inside a quoted value such as the password.
 	// Time zone names contain no characters that need quoting.
 	return fmt.Sprintf(
 		"TimeZone=%s host=%s user=%s password=%s dbname=%s port=%d sslmode=%s connect_timeout=%d search_path=%s",
