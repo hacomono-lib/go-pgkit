@@ -67,6 +67,12 @@ type Config struct {
 
 	// BeforeConnect is an optional function called before each new physical connection of this session
 	// is opened. It can change the connection config, e.g., to set an RDS IAM auth token as the password.
+	//
+	// cc is a shallow copy of the session's config: assigning a field such as Password is safe, but maps and
+	// pointers (RuntimeParams, TLSConfig, Fallbacks) are shared by all connections of the session.
+	// Copy cc first (*cc = *cc.Copy()) to change them.
+	// ConnectTimeout does not cover the hook, and ctx may have no deadline, so bound any network call
+	// in the hook with its own timeout.
 	BeforeConnect func(ctx context.Context, cc *pgx.ConnConfig) error
 
 	// envPrefix is the environment variable prefix used by WithEnvVars/WithEnvVarsWithPrefix.

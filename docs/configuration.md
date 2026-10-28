@@ -180,6 +180,12 @@ GORM's `PrepareStmt` mode is not enabled. This ensures that the request context 
 
 Each `Config.Connect()` opens the session with its own `driver.Connector` (`sql.OpenDB`), so retry and RLS settings and `BeforeConnect` apply only to that session, whichever session connects first. See [Architecture — Design Decisions](./architecture.md#why-a-connector-per-session) for details.
 
+### `BeforeConnect` gets a shallow copy of the config and is not covered by `connect_timeout`
+
+The hook gets a shallow copy of the session's `pgx.ConnConfig`. Assigning a field such as `Password` is safe, but maps and pointers (`RuntimeParams`, `TLSConfig`, `Fallbacks`) are shared by all connections of the session; writing to them races when the pool opens connections concurrently, and the change stays for later connections. Copy the config first (`*cc = *cc.Copy()`) to change them.
+
+The hook runs before pgx applies `ConnectTimeout` (`connect_timeout`), and `ctx` may have no deadline (database/sql opens connections with the caller's context, or with a background context in the pool's opener goroutine). Bound any network call in the hook, such as refreshing credentials, with its own timeout.
+
 ### `WithRetry` applies only to queries outside transactions
 
 `WithRetry` controls whether pgxretry re-runs a single query that fails with a retryable error outside a transaction (autocommit, e.g., `session.DB().Exec(...)` outside `Transaction`).
