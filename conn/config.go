@@ -109,9 +109,9 @@ func (c *Config) dsn() string {
 	if connectTimeout <= 0 {
 		connectTimeout = 10
 	}
-	// When retry and RLS are both disabled, gorm's postgres driver extracts TimeZone from the raw DSN
-	// with an unanchored regex. It is unquoted so the regex does not keep the quotes, and placed first
-	// so the regex cannot match "timezone=" inside a quoted value such as the password.
+	// When retry and RLS are both disabled and BeforeConnect is not set, gorm's postgres driver extracts
+	// TimeZone from the raw DSN with an unanchored regex. It is unquoted so the regex does not keep the quotes,
+	// and placed first so the regex cannot match "timezone=" inside a quoted value such as the password.
 	// Time zone names contain no characters that need quoting.
 	return fmt.Sprintf(
 		"TimeZone=%s host=%s user=%s password=%s dbname=%s port=%d sslmode=%s connect_timeout=%d search_path=%s",
