@@ -52,6 +52,7 @@ type TokenSource struct {
 
 // NewTokenSource creates a TokenSource that signs tokens with the region and credentials of cfg
 // (e.g., from config.LoadDefaultConfig, which uses EKS Pod Identity on EKS).
+// For a database in another region, create a TokenSource with a copy of cfg whose Region is set to that region.
 func NewTokenSource(cfg aws.Config) (*TokenSource, error) {
 	if cfg.Region == "" {
 		return nil, fmt.Errorf("%w: region is empty", ErrInvalidConfig)
