@@ -171,7 +171,8 @@ See [docs/architecture.md](../docs/architecture.md) for the full reset flow.
 ## Caveats
 
 - **Each session has its own connector**: Retry and RLS settings and `BeforeConnect` apply only to the session they are configured on, whichever session connects first.
-- **`WithRetry` applies only to queries outside transactions**: It controls whether the driver re-runs a single query that fails outside a transaction. Queries in a transaction are never re-run by the driver; `TransactionManager` re-runs the whole transaction on `pgxretry.ErrRetryableInTx`, also with `WithRetry(false, ...)` unless RLS is also disabled. See [docs/configuration.md — Caveats](../docs/configuration.md#withretry-applies-only-to-queries-outside-transactions).
+- **`WithRetry` applies only to queries outside transactions**: It controls whether the driver re-runs a single query that fails outside a transaction. Queries in a transaction are never re-run by the driver; `TransactionManager` re-runs the whole transaction on `pgxretry.ErrRetryableInTx`, also with `WithRetry(false, ...)` unless RLS is also disabled (and no connections are discarded by SQLSTATE). See [docs/configuration.md — Caveats](../docs/configuration.md#withretry-applies-only-to-queries-outside-transactions).
+- **`WithDiscardReadOnlyConns` closes connections to the old writer after a failover** (SQLSTATE 25006) instead of reusing them. See [docs/configuration.md — Discarding connections by SQLSTATE](../docs/configuration.md#discarding-connections-by-sqlstate) for what is run again.
 - **`sslmode` defaults to `disable`**. Override with `WithSSLMode` or `DB_SSLMODE`. See [docs/configuration.md — Caveats](../docs/configuration.md#caveats).
 - **GORM prepared statements are disabled** to ensure per-request context propagation for RLS session variables.
 
