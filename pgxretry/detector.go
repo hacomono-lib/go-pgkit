@@ -16,6 +16,7 @@ const (
 	SQLStatePreparedStatementNotExist    = "26000" // invalid sql statement name
 	SQLStateAdminShutdown                = "57P01" // admin_shutdown
 	SQLStateInFailedSQLTransaction       = "25P02" // in_failed_sql_transaction
+	SQLStateReadOnlySQLTransaction       = "25006" // read_only_sql_transaction
 	SQLStateSerializationFailure         = "40001" // serialization_failure
 	SQLStateDeadlockDetected             = "40P01" // deadlock_detected
 	SQLStateConnectionException          = "08000" // connection_exception (class code)

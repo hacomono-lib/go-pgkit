@@ -104,14 +104,16 @@ func newSession(config *Config) *Session {
 	// In that case DisableRetry stops pgxretry from re-running a query that fails outside
 	// a transaction, while retryable errors in transactions are still wrapped with
 	// ErrRetryableInTx, so TransactionManager can re-run the whole transaction.
+	// The same holds when only DiscardConnSQLStates is set, since pgxretry is the one that discards connections.
 	var retryConfig *pgxretry.Config
-	if config.EnableRetry || config.EnableRLS {
+	if config.EnableRetry || config.EnableRLS || len(config.DiscardConnSQLStates) > 0 {
 		retryConfig = &pgxretry.Config{
-			MaxRetries:     config.MaxRetries,
-			InitialBackoff: time.Duration(config.RetryBackoff) * time.Millisecond,
-			BackoffFactor:  2.0,
-			MaxBackoff:     5 * time.Second,
-			DisableRetry:   !config.EnableRetry,
+			MaxRetries:           config.MaxRetries,
+			InitialBackoff:       time.Duration(config.RetryBackoff) * time.Millisecond,
+			BackoffFactor:        2.0,
+			MaxBackoff:           5 * time.Second,
+			DisableRetry:         !config.EnableRetry,
+			DiscardConnSQLStates: config.DiscardConnSQLStates,
 		}
 
 		retryConfig.WithSlog(slogLogger)
@@ -496,8 +498,8 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 	return db, sqlDB, nil
 }
 
-// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled
-// and BeforeConnect is not set.
+// newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled,
+// DiscardConnSQLStates is empty, and BeforeConnect is not set.
 // Each session has its own connector, so its retry and RLS configs and BeforeConnect are not shared with other sessions.
 func (s *Session) newConnector() (driver.Connector, error) {
 	var pgxOpts []stdlib.OptionOpenDB

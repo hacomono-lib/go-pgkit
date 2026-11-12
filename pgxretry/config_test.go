@@ -268,3 +268,11 @@ func (s *ConfigTestSuite) TestNoopLogger() {
 	logger.WarnContext(ctx, "warn")
 	logger.ErrorContext(ctx, "error")
 }
+
+func (s *ConfigTestSuite) TestConfig_WithDiscardConnSQLStates() {
+	config := pgxretry.DefaultConfig().
+		WithDiscardConnSQLStates(pgxretry.SQLStateReadOnlySQLTransaction).
+		WithDiscardConnSQLStates("40001", "40P01")
+
+	s.Equal([]string{"25006", "40001", "40P01"}, config.DiscardConnSQLStates)
+}

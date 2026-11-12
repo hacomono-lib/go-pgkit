@@ -10,6 +10,7 @@ import (
 
 	"github.com/jackc/pgx/v5"
 
+	"github.com/hacomono-lib/go-pgkit/pgxretry"
 	"github.com/hacomono-lib/go-pgkit/rlsconn"
 	"github.com/hacomono-lib/go-pgkit/rlsctx"
 )
@@ -33,6 +34,10 @@ type Config struct {
 	EnableRetry  bool // Enable retry on transient errors
 	MaxRetries   int  // Maximum number of retries
 	RetryBackoff int  // Retry backoff interval in milliseconds
+
+	// DiscardConnSQLStates lists SQLSTATEs after which a connection is discarded instead of reused.
+	// See pgxretry.Config.DiscardConnSQLStates.
+	DiscardConnSQLStates []string
 
 	// Connection timeout settings
 	ConnectTimeout int // TCP connection timeout in seconds (default: 10)
@@ -87,8 +92,8 @@ type ConfigOption func(*Config)
 // String returns a string representation of Config (password is hidden).
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{role:%s, host:%s, user:%s, dbname:%s, port:%d, maxOpenConns:%d, maxIdleConns:%d, connMaxLifetime:%d, enableRetry:%v, maxRetries:%d, enableRLS:%v}",
-		c.Role, c.Host, c.User, c.DBName, c.Port, c.MaxOpenConns, c.MaxIdleConns, c.ConnMaxLifetime, c.EnableRetry, c.MaxRetries, c.EnableRLS,
+		"Config{role:%s, host:%s, user:%s, dbname:%s, port:%d, maxOpenConns:%d, maxIdleConns:%d, connMaxLifetime:%d, enableRetry:%v, maxRetries:%d, enableRLS:%v, discardConnSQLStates:%v}",
+		c.Role, c.Host, c.User, c.DBName, c.Port, c.MaxOpenConns, c.MaxIdleConns, c.ConnMaxLifetime, c.EnableRetry, c.MaxRetries, c.EnableRLS, c.DiscardConnSQLStates,
 	)
 }
 
@@ -257,6 +262,22 @@ func WithRetry(enableRetry bool, maxRetries, retryBackoffMs int) ConfigOption {
 		c.MaxRetries = maxRetries
 		c.RetryBackoff = retryBackoffMs
 	}
+}
+
+// WithDiscardConnSQLStates discards a connection that returned one of the SQLSTATEs instead of reusing it.
+// It can be called more than once; the SQLSTATEs are added and matched exactly. Prefer WithDiscardReadOnlyConns:
+// 25006 is the SQLSTATE this is meant for. See pgxretry.Config.DiscardConnSQLStates and docs/configuration.md.
+func WithDiscardConnSQLStates(states ...string) ConfigOption {
+	return func(c *Config) {
+		c.DiscardConnSQLStates = append(c.DiscardConnSQLStates, states...)
+	}
+}
+
+// WithDiscardReadOnlyConns discards a connection that returned a read-only error (SQLSTATE 25006).
+// After an Aurora failover, writer connections left on the old writer (now a reader) keep returning it.
+// Use it for writer sessions on a cluster that can fail over.
+func WithDiscardReadOnlyConns() ConfigOption {
+	return WithDiscardConnSQLStates(pgxretry.SQLStateReadOnlySQLTransaction)
 }
 
 // WithConnectTimeout sets the TCP connection timeout in seconds.
