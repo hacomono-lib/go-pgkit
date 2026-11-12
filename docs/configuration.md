@@ -40,6 +40,8 @@ cfg := conn.NewConfig(
 | `WithGormCallbackRegistrar(registrar GormCallbackRegistrar)` | Register GORM callbacks (e.g., for APM resource naming) |
 | `WithSpanStarter(starter SpanStarter)` | Custom span starter for QueryDB tracing |
 | `WithBeforeConnect(fn func(context.Context, *pgx.ConnConfig) error)` | Change the connection config before each new connection of the session (e.g., set an RDS IAM auth token as the password) |
+| `WithDiscardReadOnlyConns()` | Discard a connection that returned SQLSTATE 25006 (read-only), for writer sessions on a cluster that can fail over (see [Caveats](#discarding-connections-by-sqlstate)) |
+| `WithDiscardConnSQLStates(states ...string)` | Discard a connection that returned one of the SQLSTATEs. Prefer `WithDiscardReadOnlyConns()` |
 
 Additionally, `Config` has a method (not a `ConfigOption` function):
 
@@ -190,4 +192,15 @@ The hook runs before pgx applies `ConnectTimeout` (`connect_timeout`), and `ctx`
 
 `WithRetry` controls whether pgxretry re-runs a single query that fails with a retryable error outside a transaction (autocommit, e.g., `session.DB().Exec(...)` outside `Transaction`).
 
-Queries in a transaction are never re-run by the driver, with retry enabled or disabled. A retryable error there is returned as `pgxretry.ErrRetryableInTx`, and `TransactionManager` resets the connection and runs the whole transaction function again in a new transaction. This also holds with `WithRetry(false, ...)`, unless RLS is also disabled: with both retry and RLS disabled, the session does not use pgxretry, so errors are not wrapped and `TransactionManager` does not re-run the transaction.
+Queries in a transaction are never re-run by the driver, with retry enabled or disabled. A retryable error there is returned as `pgxretry.ErrRetryableInTx`, and `TransactionManager` resets the connection and runs the whole transaction function again in a new transaction. This also holds with `WithRetry(false, ...)`, unless RLS is also disabled: with both retry and RLS disabled, the session does not use pgxretry, so errors are not wrapped and `TransactionManager` does not re-run the transaction. If `WithDiscardConnSQLStates` is set as well, the session uses pgxretry as with RLS only enabled (errors in a transaction are wrapped, and a Go slice cannot be passed as a query argument).
+
+### Discarding connections by SQLSTATE
+
+`WithDiscardConnSQLStates(states...)` closes a connection that returned one of the SQLSTATEs instead of putting it back into the pool. `WithDiscardReadOnlyConns()` does so for 25006, which connections kept to the old writer return for every write after an Aurora failover, until `ConnMaxLifetime`:
+
+- Outside a transaction, the error is also `driver.ErrBadConn`, so database/sql runs the statement again on another connection (unless retry is disabled).
+- In a transaction, the error is wrapped with `pgxretry.ErrRetryableInTx`, and `TransactionManager` runs the transaction again. GORM's `Create`, `Save`, `Update` and `Delete` run in a transaction of their own, so they are run again only in `TransactionManager.Do`.
+- Not covered: prepared statements, and errors after the first row of a query. On a `sql.Conn` (e.g., GORM's `Connection`), database/sql does not run the statement again; outside a transaction with retry enabled, it also closes the `sql.Conn`, so later calls on it return `sql.ErrConnDone`.
+- With retry and RLS both disabled, setting this makes the session use pgxretry, so a Go slice can no longer be passed as a query argument (e.g., `[]int64` for `= ANY($1)` through `QueryDB` or database/sql fails with `unsupported type`). GORM's `IN ?` is not affected, since GORM expands the slice itself.
+- A statement that takes effect before it fails (e.g., one that contains `COMMIT`) is run again too, so only pass SQLSTATEs that a statement fails with without taking effect.
+- With `WithDiscardReadOnlyConns()`, a write in the app's own read-only transaction also returns 25006, and discards the connection. In `TransactionManager.Do`, the transaction is then run again until the retries run out, and the connection pool is reset before each retry; the caller gets `transaction failed after N retries` instead of the 25006 error.
