@@ -54,6 +54,12 @@ type Config struct {
 	// transaction (e.g., conn.TransactionManager) keeps working.
 	// MaxRetries: 0 cannot be used for this, because WithDefaults replaces it with the default.
 	DisableRetry bool
+
+	// DiscardConnSQLStates lists SQLSTATEs (matched exactly) after which the connection is closed instead of reused,
+	// e.g. 25006 from the old writer after an Aurora failover. Outside a transaction the error is also
+	// driver.ErrBadConn, so database/sql runs the statement again: only list SQLSTATEs that the statement fails
+	// with without taking effect. See docs/configuration.md.
+	DiscardConnSQLStates []string
 }
 
 // DefaultConfig returns the default configuration
@@ -120,6 +126,12 @@ func (c *Config) WithSlog(logger *slog.Logger) *Config {
 // WithErrorDetector sets a custom error detector
 func (c *Config) WithErrorDetector(detector ErrorDetector) *Config {
 	c.ErrorDetector = detector
+	return c
+}
+
+// WithDiscardConnSQLStates adds SQLSTATEs to DiscardConnSQLStates
+func (c *Config) WithDiscardConnSQLStates(states ...string) *Config {
+	c.DiscardConnSQLStates = append(c.DiscardConnSQLStates, states...)
 	return c
 }
 

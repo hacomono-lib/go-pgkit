@@ -3,10 +3,15 @@ package pgxretry
 import (
 	"context"
 	"database/sql/driver"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
+
+	"github.com/jackc/pgx/v5/pgconn"
 )
 
 // retryableConn wraps a database connection with retry logic
@@ -22,6 +27,7 @@ type retryableConn struct {
 	detector      ErrorDetector
 	strategy      RetryStrategy
 	resetFunc     ConnectionResetFunc
+	mustDiscard   atomic.Bool
 }
 
 // SessionResetter is the interface for resetting session state.
@@ -39,7 +45,33 @@ var (
 	_ driver.QueryerContext     = (*retryableConn)(nil)
 	_ driver.ExecerContext      = (*retryableConn)(nil)
 	_ SessionResetter           = (*retryableConn)(nil)
+	_ driver.Validator          = (*retryableConn)(nil)
 )
+
+// IsValid implements driver.Validator. database/sql calls it before putting the connection back into the pool
+// and closes the connection instead when it returns false.
+func (c *retryableConn) IsValid() bool {
+	return !c.mustDiscard.Load()
+}
+
+// markMustDiscard sets mustDiscard when err has one of Config.DiscardConnSQLStates,
+// so that database/sql discards the connection. It reports whether err has one of them.
+func (c *retryableConn) markMustDiscard(ctx context.Context, err error) bool {
+	var pgErr *pgconn.PgError
+	if !errors.As(err, &pgErr) || !slices.Contains(c.config.DiscardConnSQLStates, pgErr.Code) {
+		return false
+	}
+	if !c.mustDiscard.CompareAndSwap(false, true) {
+		return true
+	}
+	// Outside a transaction the caller gets ErrBadConn and database/sql runs the statement again on another
+	// connection, so the error is not seen by the caller. Log it so that a failover can be noticed.
+	c.logger.WarnContext(ctx, "discarding the connection because it returned an error in DiscardConnSQLStates",
+		"sqlstate", pgErr.Code,
+		"error", err.Error(),
+	)
+	return true
+}
 
 // Ping implements driver.Pinger
 func (c *retryableConn) Ping(ctx context.Context) error {
@@ -173,7 +205,7 @@ func executeWithRetry[T any](ctx context.Context, c *retryableConn, operation fu
 	if inTx {
 		// In transaction: execute once and wrap errors
 		result, err := operation()
-		if err != nil && c.detector.IsRetryableError(err) {
+		if c.markMustDiscard(ctx, err) || (err != nil && c.detector.IsRetryableError(err)) {
 			// Wrap retryable errors to indicate they occurred in a transaction
 			return result, WrapRetryableInTx(err)
 		}
@@ -182,12 +214,19 @@ func executeWithRetry[T any](ctx context.Context, c *retryableConn, operation fu
 
 	// Not in transaction: run once without re-running or resetting when retry is disabled
 	if c.config.DisableRetry {
-		return operation()
+		result, err := operation()
+		c.markMustDiscard(ctx, err)
+		return result, err
 	}
 
 	// Not in transaction: can retry
 	for attempt := 0; attempt <= c.config.MaxRetries; attempt++ {
 		result, err := operation()
+		// Retrying on this connection would fail the same way. ErrBadConn makes database/sql
+		// discard it and run the statement again on another connection.
+		if c.markMustDiscard(ctx, err) {
+			return zero, &discardedConnError{err: err}
+		}
 		if err == nil {
 			// Log successful recovery after retry
 			if attempt > 0 {
@@ -381,3 +420,12 @@ func (t *retryableTx) Rollback() error {
 
 	return err
 }
+
+// discardedConnError is driver.ErrBadConn, so that database/sql runs the statement again on another connection,
+// and keeps the original error, which database/sql returns when every attempt fails.
+type discardedConnError struct {
+	err error
+}
+
+func (e *discardedConnError) Error() string   { return e.err.Error() }
+func (e *discardedConnError) Unwrap() []error { return []error{driver.ErrBadConn, e.err} }
