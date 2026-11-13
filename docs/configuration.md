@@ -42,6 +42,7 @@ cfg := conn.NewConfig(
 | `WithBeforeConnect(fn func(context.Context, *pgx.ConnConfig) error)` | Change the connection config before each new connection of the session (e.g., set an RDS IAM auth token as the password) |
 | `WithDiscardReadOnlyConns()` | Discard a connection that returned SQLSTATE 25006 (read-only), for writer sessions on a cluster that can fail over (see [Caveats](#discarding-connections-by-sqlstate)) |
 | `WithDiscardConnSQLStates(states ...string)` | Discard a connection that returned one of the SQLSTATEs. Prefer `WithDiscardReadOnlyConns()` |
+| `WithCheckReadOnlyConns(interval time.Duration)` | Close a connection found read-only when it is opened or before it is reused from the pool, for writer sessions on a cluster that can fail over (see [Caveats](#checking-connections-for-read-only)) |
 
 Additionally, `Config` has a method (not a `ConfigOption` function):
 
@@ -204,3 +205,13 @@ Queries in a transaction are never re-run by the driver, with retry enabled or d
 - With retry and RLS both disabled, setting this makes the session use pgxretry, so a Go slice can no longer be passed as a query argument (e.g., `[]int64` for `= ANY($1)` through `QueryDB` or database/sql fails with `unsupported type`). GORM's `IN ?` is not affected, since GORM expands the slice itself.
 - A statement that takes effect before it fails (e.g., one that contains `COMMIT`) is run again too, so only pass SQLSTATEs that a statement fails with without taking effect.
 - With `WithDiscardReadOnlyConns()`, a write in the app's own read-only transaction also returns 25006, and discards the connection. In `TransactionManager.Do`, the transaction is then run again until the retries run out, and the connection pool is reset before each retry; the caller gets `transaction failed after N retries` instead of the 25006 error.
+
+### Checking connections for read-only
+
+`WithDiscardReadOnlyConns()` only discards a connection after a write on it has failed. `WithCheckReadOnlyConns(interval)` checks connections before they are used, with `SHOW transaction_read_only` (as libpq's `target_session_attrs=read-write` does), and closes the ones that are read-only:
+
+- **New connections** are checked when they are opened. When the check fails, opening returns `pgxretry.ErrReadOnlyConn` (also `driver.ErrBadConn`), so database/sql tries again; if every new connection is read-only, the caller gets that error and the write is not sent. `NewSessionManager` fails the same way when the writer is read-only.
+- **Connections reused from the pool** are checked when database/sql takes them (`ResetSession`), unless the connection was checked less than `interval` ago. A read-only connection, or one that the check fails on, is closed, and database/sql takes another one, before the statement or `BEGIN` is sent, so nothing is run again. database/sql has no background check of idle connections; they are checked when they are taken.
+- Each check is one more round trip. With `interval` 0, every statement outside a transaction and every transaction waits for one more. A larger interval checks less often but lets a connection that became read-only since its last check be used; combine it with `WithDiscardReadOnlyConns()` to cover that case.
+- Use it for writer sessions only: every reader connection is read-only, so a reader session with it cannot open any connection.
+- As with `WithDiscardConnSQLStates`, setting it makes the session use pgxretry even with retry and RLS both disabled.

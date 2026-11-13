@@ -107,6 +107,8 @@ pgxretry.Register(config)
 | `BackoffFactor` | `2.0` |
 | `Logger` | `NoopLogger` |
 | `DiscardConnSQLStates` | none (connections are not discarded by SQLSTATE) |
+| `CheckReadOnlyConns` | `false` (connections are not checked for read-only) |
+| `ReadOnlyCheckInterval` | `0` (with `CheckReadOnlyConns`, checked before every reuse) |
 
 ### With Structured Logging (slog)
 
@@ -265,4 +267,5 @@ pgxretry.Register(config)
 - **Per-pool configuration**: To use a different configuration for each connection pool, create a connector with `pgxretry.NewConnector(dsn, config)` and open it with `sql.OpenDB` instead of registering the driver. Options for the underlying pgx connector, such as `stdlib.OptionBeforeConnect`, can be passed as extra arguments. The `conn` package does this for each session.
 - **Transaction retries are your responsibility**: pgxretry does not retry within transactions. Check for `ErrRetryableInTx` and retry the entire transaction at the application level.
 - **Discarding connections by SQLSTATE**: With `DiscardConnSQLStates` (e.g., `WithDiscardConnSQLStates(SQLStateReadOnlySQLTransaction)` for the old writer after an Aurora failover), a connection that returned one of the SQLSTATEs is closed instead of reused. See [docs/configuration.md — Discarding connections by SQLSTATE](../docs/configuration.md#discarding-connections-by-sqlstate) for what is run again and what is not covered.
+- **Checking connections for read-only**: With `CheckReadOnlyConns` (`WithCheckReadOnlyConns(interval)`), each new connection and, from `ResetSession`, each connection reused from the pool (unless checked less than `ReadOnlyCheckInterval` ago) runs `SHOW transaction_read_only`, and is closed with `ErrReadOnlyConn` (also `driver.ErrBadConn`) when it is read-only. See [docs/configuration.md — Checking connections for read-only](../docs/configuration.md#checking-connections-for-read-only).
 - When using pgxretry through the `conn` package, retry configuration is managed by `conn.Config`. See [docs/configuration.md](../docs/configuration.md) for details.

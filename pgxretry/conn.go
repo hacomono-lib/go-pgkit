@@ -28,6 +28,9 @@ type retryableConn struct {
 	strategy      RetryStrategy
 	resetFunc     ConnectionResetFunc
 	mustDiscard   atomic.Bool
+	// readOnlyCheckedAt is when checkReadOnly last found the connection writable.
+	// database/sql calls ResetSession from one goroutine at a time, so it needs no lock.
+	readOnlyCheckedAt time.Time
 }
 
 // SessionResetter is the interface for resetting session state.
@@ -83,13 +86,63 @@ func (c *retryableConn) Ping(ctx context.Context) error {
 }
 
 // ResetSession implements SessionResetter.
-// It delegates to the base connection's ResetSession if available.
+// It delegates to the base connection's ResetSession if available, then checks whether the connection is
+// read-only when Config.CheckReadOnlyConns is set.
 // This is called when a connection is reused from the pool.
 func (c *retryableConn) ResetSession(ctx context.Context) error {
 	if resetter, ok := c.baseConn.(SessionResetter); ok {
-		return resetter.ResetSession(ctx)
+		if err := resetter.ResetSession(ctx); err != nil {
+			return err
+		}
 	}
+	if !c.config.CheckReadOnlyConns || time.Since(c.readOnlyCheckedAt) < c.config.ReadOnlyCheckInterval {
+		return nil
+	}
+	return c.checkReadOnly(ctx)
+}
+
+// checkReadOnly returns an error that is driver.ErrBadConn, so that database/sql closes the connection and takes
+// another one, when the connection is read-only or the check fails.
+func (c *retryableConn) checkReadOnly(ctx context.Context) error {
+	readOnly, err := c.isReadOnly(ctx)
+	if err != nil {
+		c.logger.WarnContext(ctx, "discarding the connection because checking whether it is read-only failed",
+			"error", err.Error(),
+		)
+		return fmt.Errorf("%w: checking whether the connection is read-only: %w", driver.ErrBadConn, err)
+	}
+	if readOnly {
+		c.logger.WarnContext(ctx, "discarding the connection because it is read-only")
+		return fmt.Errorf("%w (%w)", ErrReadOnlyConn, driver.ErrBadConn)
+	}
+	c.readOnlyCheckedAt = time.Now()
 	return nil
+}
+
+// isReadOnly reports whether a statement run on the connection outside a transaction would be read-only,
+// as pgconn.ValidateConnectTargetSessionAttrsReadWrite (target_session_attrs=read-write) does.
+func (c *retryableConn) isReadOnly(ctx context.Context) (bool, error) {
+	queryer, ok := c.baseConn.(driver.QueryerContext)
+	if !ok {
+		return false, errors.New("the base connection does not implement driver.QueryerContext")
+	}
+	rows, err := queryer.QueryContext(ctx, "SHOW transaction_read_only", nil)
+	if err != nil {
+		return false, err
+	}
+	defer func() { _ = rows.Close() }()
+	dest := make([]driver.Value, 1)
+	if err := rows.Next(dest); err != nil {
+		return false, err
+	}
+	switch v := dest[0].(type) {
+	case string:
+		return v == "on", nil
+	case []byte:
+		return string(v) == "on", nil
+	default:
+		return false, fmt.Errorf("unexpected transaction_read_only value of type %T", v)
+	}
 }
 
 // QueryContext implements driver.QueryerContext

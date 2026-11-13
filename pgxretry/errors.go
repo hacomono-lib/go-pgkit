@@ -19,6 +19,9 @@ var (
 
 	// ErrInvalidConfig indicates invalid configuration
 	ErrInvalidConfig = errors.New("invalid configuration")
+
+	// ErrReadOnlyConn indicates that Config.CheckReadOnlyConns found the connection read-only
+	ErrReadOnlyConn = errors.New("connection is read-only")
 )
 
 // DriverError wraps an error with driver-specific context

@@ -104,16 +104,19 @@ func newSession(config *Config) *Session {
 	// In that case DisableRetry stops pgxretry from re-running a query that fails outside
 	// a transaction, while retryable errors in transactions are still wrapped with
 	// ErrRetryableInTx, so TransactionManager can re-run the whole transaction.
-	// The same holds when only DiscardConnSQLStates is set, since pgxretry is the one that discards connections.
+	// The same holds when only DiscardConnSQLStates or CheckReadOnlyConns is set, since pgxretry is the one that
+	// discards connections.
 	var retryConfig *pgxretry.Config
-	if config.EnableRetry || config.EnableRLS || len(config.DiscardConnSQLStates) > 0 {
+	if config.EnableRetry || config.EnableRLS || len(config.DiscardConnSQLStates) > 0 || config.CheckReadOnlyConns {
 		retryConfig = &pgxretry.Config{
-			MaxRetries:           config.MaxRetries,
-			InitialBackoff:       time.Duration(config.RetryBackoff) * time.Millisecond,
-			BackoffFactor:        2.0,
-			MaxBackoff:           5 * time.Second,
-			DisableRetry:         !config.EnableRetry,
-			DiscardConnSQLStates: config.DiscardConnSQLStates,
+			MaxRetries:            config.MaxRetries,
+			InitialBackoff:        time.Duration(config.RetryBackoff) * time.Millisecond,
+			BackoffFactor:         2.0,
+			MaxBackoff:            5 * time.Second,
+			DisableRetry:          !config.EnableRetry,
+			DiscardConnSQLStates:  config.DiscardConnSQLStates,
+			CheckReadOnlyConns:    config.CheckReadOnlyConns,
+			ReadOnlyCheckInterval: config.ReadOnlyCheckInterval,
 		}
 
 		retryConfig.WithSlog(slogLogger)
@@ -499,7 +502,7 @@ func (s *Session) connect() (*gorm.DB, *sql.DB, error) {
 }
 
 // newConnector returns a connector for this session, or nil when neither retry nor RLS is enabled,
-// DiscardConnSQLStates is empty, and BeforeConnect is not set.
+// DiscardConnSQLStates is empty, CheckReadOnlyConns is not set, and BeforeConnect is not set.
 // Each session has its own connector, so its retry and RLS configs and BeforeConnect are not shared with other sessions.
 func (s *Session) newConnector() (driver.Connector, error) {
 	var pgxOpts []stdlib.OptionOpenDB

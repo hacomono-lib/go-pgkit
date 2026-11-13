@@ -85,7 +85,7 @@ Config.Connect()
     │
     ▼
 newSession(config)
-    ├── creates pgxretry.Config (if retry or RLS enabled, or DiscardConnSQLStates set; DisableRetry if retry is disabled)
+    ├── creates pgxretry.Config (if retry or RLS enabled, or DiscardConnSQLStates or CheckReadOnlyConns set; DisableRetry if retry is disabled)
     └── creates rlsconn.Config (if RLS enabled with session vars)
     │
     ▼
