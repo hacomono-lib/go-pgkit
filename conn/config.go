@@ -7,6 +7,7 @@ import (
 	"os"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 
@@ -38,6 +39,12 @@ type Config struct {
 	// DiscardConnSQLStates lists SQLSTATEs after which a connection is discarded instead of reused.
 	// See pgxretry.Config.DiscardConnSQLStates.
 	DiscardConnSQLStates []string
+
+	// CheckReadOnlyConns closes a connection found read-only on connect or before it is reused from the pool.
+	// ReadOnlyCheckInterval skips the check before reuse when the connection was checked less than this long ago.
+	// See pgxretry.Config.CheckReadOnlyConns.
+	CheckReadOnlyConns    bool
+	ReadOnlyCheckInterval time.Duration
 
 	// Connection timeout settings
 	ConnectTimeout int // TCP connection timeout in seconds (default: 10)
@@ -92,8 +99,8 @@ type ConfigOption func(*Config)
 // String returns a string representation of Config (password is hidden).
 func (c *Config) String() string {
 	return fmt.Sprintf(
-		"Config{role:%s, host:%s, user:%s, dbname:%s, port:%d, maxOpenConns:%d, maxIdleConns:%d, connMaxLifetime:%d, enableRetry:%v, maxRetries:%d, enableRLS:%v, discardConnSQLStates:%v}",
-		c.Role, c.Host, c.User, c.DBName, c.Port, c.MaxOpenConns, c.MaxIdleConns, c.ConnMaxLifetime, c.EnableRetry, c.MaxRetries, c.EnableRLS, c.DiscardConnSQLStates,
+		"Config{role:%s, host:%s, user:%s, dbname:%s, port:%d, maxOpenConns:%d, maxIdleConns:%d, connMaxLifetime:%d, enableRetry:%v, maxRetries:%d, enableRLS:%v, discardConnSQLStates:%v, checkReadOnlyConns:%v, readOnlyCheckInterval:%s}",
+		c.Role, c.Host, c.User, c.DBName, c.Port, c.MaxOpenConns, c.MaxIdleConns, c.ConnMaxLifetime, c.EnableRetry, c.MaxRetries, c.EnableRLS, c.DiscardConnSQLStates, c.CheckReadOnlyConns, c.ReadOnlyCheckInterval,
 	)
 }
 
@@ -278,6 +285,19 @@ func WithDiscardConnSQLStates(states ...string) ConfigOption {
 // Use it for writer sessions on a cluster that can fail over.
 func WithDiscardReadOnlyConns() ConfigOption {
 	return WithDiscardConnSQLStates(pgxretry.SQLStateReadOnlySQLTransaction)
+}
+
+// WithCheckReadOnlyConns closes a connection that is read-only when it is opened or before it is reused from the
+// pool, so that writes do not reach the old writer after an Aurora failover. Each check runs
+// SHOW transaction_read_only, one more round trip; interval skips the check before reuse when the connection was
+// checked less than interval ago (0 checks before every reuse). Use it for writer sessions, together with
+// WithDiscardReadOnlyConns, which covers connections that become read-only between checks.
+// See pgxretry.Config.CheckReadOnlyConns and docs/configuration.md.
+func WithCheckReadOnlyConns(interval time.Duration) ConfigOption {
+	return func(c *Config) {
+		c.CheckReadOnlyConns = true
+		c.ReadOnlyCheckInterval = interval
+	}
 }
 
 // WithConnectTimeout sets the TCP connection timeout in seconds.
