@@ -159,6 +159,13 @@ func (c *connector) Connect(ctx context.Context) (driver.Conn, error) {
 		resetFunc: config.ConnectionResetFunc,
 	}
 
+	if config.CheckReadOnlyConns {
+		if err := conn.checkReadOnly(ctx); err != nil {
+			_ = conn.Close()
+			return nil, err
+		}
+	}
+
 	return conn, nil
 }
 

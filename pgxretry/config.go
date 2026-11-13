@@ -60,6 +60,16 @@ type Config struct {
 	// driver.ErrBadConn, so database/sql runs the statement again: only list SQLSTATEs that the statement fails
 	// with without taking effect. See docs/configuration.md.
 	DiscardConnSQLStates []string
+
+	// CheckReadOnlyConns makes the driver run SHOW transaction_read_only on each new connection and, from
+	// ResetSession, before a connection is reused from the pool, and close the connection when it is read-only
+	// (e.g., one to the old writer after an Aurora failover) or the check fails: the error is driver.ErrBadConn,
+	// so database/sql takes another connection. Each check is one more round trip. See docs/configuration.md.
+	CheckReadOnlyConns bool
+
+	// ReadOnlyCheckInterval skips the check before reusing a connection when the connection was checked less
+	// than this long ago. 0 checks before every reuse. New connections are always checked.
+	ReadOnlyCheckInterval time.Duration
 }
 
 // DefaultConfig returns the default configuration
@@ -114,6 +124,9 @@ func (c *Config) Validate() error {
 	if c.BackoffFactor < 1.0 {
 		return WrapDriverError(ErrInvalidConfig, "BackoffFactor must be >= 1.0")
 	}
+	if c.ReadOnlyCheckInterval < 0 {
+		return WrapDriverError(ErrInvalidConfig, "ReadOnlyCheckInterval must be non-negative")
+	}
 	return nil
 }
 
@@ -132,6 +145,13 @@ func (c *Config) WithErrorDetector(detector ErrorDetector) *Config {
 // WithDiscardConnSQLStates adds SQLSTATEs to DiscardConnSQLStates
 func (c *Config) WithDiscardConnSQLStates(states ...string) *Config {
 	c.DiscardConnSQLStates = append(c.DiscardConnSQLStates, states...)
+	return c
+}
+
+// WithCheckReadOnlyConns sets CheckReadOnlyConns and ReadOnlyCheckInterval
+func (c *Config) WithCheckReadOnlyConns(interval time.Duration) *Config {
+	c.CheckReadOnlyConns = true
+	c.ReadOnlyCheckInterval = interval
 	return c
 }
 
